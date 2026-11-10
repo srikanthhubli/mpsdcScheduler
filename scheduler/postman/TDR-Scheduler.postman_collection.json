@@ -1,0 +1,235 @@
+{
+  "info": {
+    "name": "TDR Scheduler",
+    "description": "Calls the TDR scheduler. Run Login first. The test script stores the returned token in {{token}}. Business calls send Authorization: Bearer {{token}}.\n\nDashboard: open {{baseUrl}}/ and sign in as admin.\n\nPhase runs can take minutes. Use limit 1 while checking.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "http://127.0.0.1:8088"},
+    {"key": "token", "value": ""},
+    {"key": "adminUser", "value": "admin"},
+    {"key": "adminPassword", "value": "admin"},
+    {"key": "certificate", "value": "DRC/2024/00002/Indore"},
+    {"key": "applicationId", "value": "TDR202471184557197"},
+    {"key": "ownerId", "value": "101"}
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{"key": "token", "value": "{{token}}", "type": "string"}]
+  },
+  "item": [
+    {
+      "name": "Login",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "if (body.token) pm.collectionVariables.set('token', body.token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {"type": "noauth"},
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{adminUser}}\",\n  \"password\": \"{{adminPassword}}\"\n}"
+        },
+        "url": "{{baseUrl}}/login",
+        "description": "Admin sign-in. Saves the token for the rest of the collection."
+      }
+    },
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/health"
+      }
+    },
+    {
+      "name": "Status",
+      "request": {"method": "GET", "header": [], "url": "{{baseUrl}}/status"}
+    },
+    {
+      "name": "List verifications",
+      "request": {"method": "GET", "header": [], "url": "{{baseUrl}}/verifications"}
+    },
+    {
+      "name": "One verification",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/verifications?certificate={{certificate}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["verifications"],
+          "query": [{"key": "certificate", "value": "{{certificate}}"}]
+        }
+      }
+    },
+    {
+      "name": "List jobs",
+      "request": {"method": "GET", "header": [], "url": "{{baseUrl}}/jobs"}
+    },
+    {
+      "name": "One legacy job",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/jobs?applicationId={{applicationId}}&mode=legacy",
+          "host": ["{{baseUrl}}"],
+          "path": ["jobs"],
+          "query": [
+            {"key": "applicationId", "value": "{{applicationId}}"},
+            {"key": "mode", "value": "legacy"}
+          ]
+        }
+      }
+    },
+    {
+      "name": "One live job",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/jobs?applicationId={{applicationId}}&mode=live",
+          "host": ["{{baseUrl}}"],
+          "path": ["jobs"],
+          "query": [
+            {"key": "applicationId", "value": "{{applicationId}}"},
+            {"key": "mode", "value": "live"}
+          ]
+        }
+      }
+    },
+    {
+      "name": "Run phase 1",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"certificate\": \"{{certificate}}\",\n  \"limit\": 1\n}"
+        },
+        "url": "{{baseUrl}}/run/phase1",
+        "description": "DRC verification only. Compares TDR GetDetailByCertificateNo with blockchain GetDRCDetails. Does not write."
+      }
+    },
+    {
+      "name": "Export phase 1 CSV",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/verifications.csv?onChain=1",
+          "host": ["{{baseUrl}}"],
+          "path": ["verifications.csv"],
+          "query": [{"key": "onChain", "value": "1", "description": "Set to 1 for ledger rows only. Remove the query to export every phase 1 row."}]
+        },
+        "description": "CSV of phase 1 rows. Columns include on_chain, flg, and chain_action (generate or update)."
+      }
+    },
+    {
+      "name": "Run phase 2",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"applicationId\": \"{{applicationId}}\",\n  \"limit\": 1,\n  \"force\": false\n}"
+        },
+        "url": "{{baseUrl}}/run/phase2",
+        "description": "Legacy migration. Writes InsertGeneratingArea, InsertOwnerDetail, DRCUpload, then InsertTransferRequest when a transfer exists."
+      }
+    },
+    {
+      "name": "Run phase 3",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"applicationId\": \"{{applicationId}}\",\n  \"ownerIds\": [\"{{ownerId}}\"],\n  \"certificateNos\": [\"{{certificate}}\"],\n  \"force\": false\n}"
+        },
+        "url": "{{baseUrl}}/run/phase3",
+        "description": "Live sync for one application. Same write order as phase 2."
+      }
+    },
+    {
+      "name": "Phase runs",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/runs",
+        "description": "Phase 2 and phase 3 progress. extracted is the application id list. current is the one running. items shows each id, status, stage, and message. Call this while Run phase 2 or Run phase 3 is still in progress."
+      }
+    },
+    {
+      "name": "Pause phase 2",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{}"},
+        "url": "{{baseUrl}}/runs/phase2/pause",
+        "description": "Pause the current phase 2 run after the step already in flight."
+      }
+    },
+    {
+      "name": "Resume phase 2",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{}"},
+        "url": "{{baseUrl}}/runs/phase2/resume",
+        "description": "Continue a paused phase 2 run."
+      }
+    },
+    {
+      "name": "Stop phase 2",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{}"},
+        "url": "{{baseUrl}}/runs/phase2/stop",
+        "description": "Stop phase 2 after the current step. Application ids not started stay NOT_STARTED."
+      }
+    },
+    {
+      "name": "Pause phase 3",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{}"},
+        "url": "{{baseUrl}}/runs/phase3/pause",
+        "description": "Pause the current phase 3 run after the step already in flight."
+      }
+    },
+    {
+      "name": "Resume phase 3",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{}"},
+        "url": "{{baseUrl}}/runs/phase3/resume",
+        "description": "Continue a paused phase 3 run."
+      }
+    },
+    {
+      "name": "Stop phase 3",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{}"},
+        "url": "{{baseUrl}}/runs/phase3/stop",
+        "description": "Stop phase 3 after the current step. Application ids not started stay NOT_STARTED."
+      }
+    }
+  ]
+}

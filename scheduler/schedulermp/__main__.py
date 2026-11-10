@@ -1,0 +1,78 @@
+import argparse
+import logging
+import os
+
+from schedulermp.chain import ChainClient
+from schedulermp.config import load_settings
+from schedulermp.server import SchedulerApp, serve
+from schedulermp.store import StateStore
+from schedulermp.tdr import TdrClient
+
+
+def load_dotenv(path: str = ".env") -> None:
+    if not os.path.exists(path):
+        return
+    with open(path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            text = line.strip()
+            if not text or text.startswith("#") or "=" not in text:
+                continue
+            key, value = text.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def build_app() -> SchedulerApp:
+    load_dotenv()
+    settings = load_settings()
+    store = StateStore(settings.state_path)
+    return SchedulerApp(settings, TdrClient(settings), ChainClient(settings), store)
+
+
+def main(argv: list[str] | None = None) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    parser = argparse.ArgumentParser(description="TDR to MP blockchain scheduler")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("serve", help="run the HTTP API and enabled phase loops")
+
+    phase1 = sub.add_parser("phase1", help="verify DRC certificates against blockchain")
+    phase1.add_argument("--certificate", default="")
+    phase1.add_argument("--limit", type=int, default=0)
+
+    phase2 = sub.add_parser("phase2", help="migrate legacy applications")
+    phase2.add_argument("--application-id", default="")
+    phase2.add_argument("--limit", type=int, default=0)
+    phase2.add_argument("--force", action="store_true")
+
+    phase3 = sub.add_parser("phase3", help="sync one live application, or poll new ones")
+    phase3.add_argument("--application-id", default="")
+    phase3.add_argument("--owner-id", action="append", default=[])
+    phase3.add_argument("--certificate", action="append", default=[])
+    phase3.add_argument("--limit", type=int, default=0)
+    phase3.add_argument("--force", action="store_true")
+
+    args = parser.parse_args(argv)
+    app = build_app()
+    if args.command == "serve":
+        serve(app)
+        return
+    if args.command == "phase1":
+        print_result(app.run_phase1(args.certificate, args.limit))
+        return
+    if args.command == "phase2":
+        print_result(app.run_phase2(args.application_id, args.limit, args.force))
+        return
+    if args.command == "phase3":
+        print_result(
+            app.run_phase3(args.application_id, args.owner_id, args.certificate, args.force, args.limit)
+        )
+
+
+def print_result(payload: dict) -> None:
+    import json
+
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TDR blockchain desk</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <section id="loginView" class="login-wrap">
+    <form id="loginForm" class="login-card">
+      <p class="eyebrow">MP TDR</p>
+      <h1>Blockchain desk</h1>
+      <p class="muted">Sign in with the admin account for this server.</p>
+      <label>Username<input name="username" autocomplete="username" value="admin" required /></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required /></label>
+      <p id="loginError" class="form-error" hidden></p>
+      <button type="submit">Sign in</button>
+    </form>
+  </section>
+
+  <div id="appView" hidden>
+    <header class="top">
+      <div class="brand">
+        <p class="eyebrow">MP TDR</p>
+        <h1>Blockchain desk</h1>
+      </div>
+      <form id="connect" class="connect">
+        <label>Scheduler URL<input id="apiBase" type="url" required /></label>
+        <button type="submit">Connect</button>
+        <span id="health" class="pill">offline</span>
+        <button type="button" id="logout" class="secondary">Sign out</button>
+      </form>
+    </header>
+    <p id="notice" class="notice" hidden></p>
+    <div class="shell">
+      <nav>
+        <button type="button" data-screen="overview" class="active">Overview</button>
+        <button type="button" data-screen="verifications">Verifications</button>
+        <button type="button" data-screen="jobs">Jobs</button>
+        <button type="button" data-screen="run">Run</button>
+      </nav>
+      <main id="main"></main>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
