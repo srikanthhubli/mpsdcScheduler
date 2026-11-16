@@ -27,7 +27,7 @@ from schedulermp.phase1 import run_phase1, verifications_csv
 from schedulermp.pipeline import SyncService
 from schedulermp.runs import RunBoard, RunBusy
 
-log = logging.getLogger("schedulermp")
+log = logging.getLogger("schedulermp.server")
 
 
 class SchedulerApp:
@@ -127,6 +127,7 @@ class SchedulerApp:
             if window:
                 key = window[0].date().isoformat()
                 if legacy.get("lastWindow") != key and self.store.claim_field("legacy", "lastWindow", key):
+                    log.info("legacy window %s claimed for %s hour(s) from %s", key, legacy["hours"], legacy["start"])
                     threading.Thread(
                         target=self._scheduled_legacy,
                         args=(key,),
@@ -144,9 +145,11 @@ class SchedulerApp:
         try:
             result = self.run_phase2()
         except RunBusy:
+            log.info("legacy window %s left unclaimed because phase 2 is already running", window_key)
             self._release_claim("legacy", "lastWindow", window_key)
             return
         except Exception as exc:
+            log.exception("legacy window %s failed", window_key)
             self._note("legacy", f"Legacy window failed: {exc}")
             return
         finally:
@@ -268,6 +271,7 @@ class SchedulerApp:
         if control is None:
             raise RunBusy(f"Phase {phase} has no run to {action}")
         changed = getattr(control, action)()
+        log.info("phase %s %s accepted=%s", phase, action, changed)
         snapshot = control.snapshot()
         if not changed:
             snapshot["accepted"] = False
@@ -298,7 +302,12 @@ def make_handler(app: SchedulerApp):
         protocol_version = "HTTP/1.1"
 
         def log_message(self, fmt, *args):
-            log.info("%s - %s", self.address_string(), fmt % args)
+            path = urlparse(self.path).path
+            status = args[1] if len(args) > 1 else ""
+            if path in STATIC_FILES or path in {"/runs", "/health", "/status"}:
+                log.debug("%s %s %s", self.command, path, status)
+                return
+            log.info("%s %s %s", self.command, path, status)
 
         def _authorized(self) -> bool:
             header = self.headers.get("Authorization", "")
@@ -446,10 +455,12 @@ def make_handler(app: SchedulerApp):
                 user_ok = secrets.compare_digest(username, app.settings.admin_username)
                 pass_ok = secrets.compare_digest(password, app.settings.admin_password)
                 if not (user_ok and pass_ok):
+                    log.warning("login failed for %s", username or "(blank)")
                     self._json(401, {"status": "FAILED", "message": "Invalid username or password"})
                     return
                 token = secrets.token_urlsafe(32)
                 app.sessions.add(token)
+                log.info("login succeeded for %s", username)
                 self._json(200, {"status": "SUCCESS", "username": username, "token": token})
                 return
             if not self._authorized():
@@ -496,6 +507,7 @@ def make_handler(app: SchedulerApp):
                     self._json(200, app.run_command(phase, name))
                     return
             except RunBusy as exc:
+                log.info("%s busy: %s", parsed.path, exc)
                 self._json(409, {"status": "FAILED", "message": str(exc)})
                 return
             except ValueError as exc:
@@ -566,7 +578,13 @@ def serve(app: SchedulerApp) -> None:
     app.start_loops()
     app.start_clock()
     server = ThreadingHTTPServer((app.settings.http_host, app.settings.http_port), make_handler(app))
-    log.info("scheduler listening on %s:%s", app.settings.http_host, app.settings.http_port)
+    log.info(
+        "scheduler listening on %s:%s dry_run=%s phase1=%s",
+        app.settings.http_host,
+        app.settings.http_port,
+        app.settings.dry_run,
+        app.settings.phase1_enabled,
+    )
     try:
         server.serve_forever()
     finally:

@@ -1,4 +1,5 @@
 import json
+import logging
 import ssl
 import time
 import uuid
@@ -6,6 +7,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
+
+log = logging.getLogger("schedulermp.http")
+
+_SECRET_QUERY = ("key", "token", "password", "secret")
 
 def _ssl_context() -> ssl.SSLContext:
     context = ssl.create_default_context()
@@ -47,8 +52,29 @@ def is_missing(status: int, body: Any) -> bool:
 
 def is_duplicate(status: int, body: Any) -> bool:
     text = error_text(body).lower()
-    # Fabric reports an existing record as HTTP 400 with "already exists", not 409.
-    return "already exists" in text or "already exist" in text or status == 409
+    code = ""
+    if isinstance(body, dict):
+        code = str(body.get("code") or "").upper()
+    # An existing application is "already exists". An owner registered again on the
+    # same application is "already registered" with code DUPLICATE_OWNER. Both are HTTP 400.
+    return (
+        "already exists" in text
+        or "already exist" in text
+        or "already registered" in text
+        or code == "DUPLICATE_OWNER"
+        or status == 409
+    )
+
+
+def safe_url(url: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    query = []
+    for key, value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True):
+        if any(word in key.lower() for word in _SECRET_QUERY):
+            query.append((key, "***"))
+        else:
+            query.append((key, value))
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urllib.parse.urlencode(query), ""))
 
 
 class HttpClient:
@@ -81,22 +107,28 @@ class HttpClient:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
         attempt = 0
+        target = safe_url(url)
         while True:
+            started = time.monotonic()
             req = urllib.request.Request(url, data=data, headers=headers, method=method)
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout, context=self._ssl) as resp:
                     raw = resp.read().decode("utf-8")
+                    elapsed = int((time.monotonic() - started) * 1000)
                     if not raw:
+                        log.debug("%s %s %s %s %sms", self.name, method, target, resp.status, elapsed)
                         return resp.status, {}
                     try:
                         parsed = json.loads(raw)
                     except json.JSONDecodeError:
+                        log.warning("%s %s %s returned a body that is not JSON", self.name, method, target)
                         raise ApiError(
                             resp.status,
                             f"{self.name} returned a body that is not JSON",
                             {"error": raw[:500]},
                             False,
                         )
+                    log.debug("%s %s %s %s %sms", self.name, method, target, resp.status, elapsed)
                     return resp.status, parsed
             except urllib.error.HTTPError as exc:
                 raw = exc.read().decode("utf-8", errors="replace")
@@ -105,15 +137,23 @@ class HttpClient:
                 except json.JSONDecodeError:
                     parsed = {"error": raw[:500]}
                 retryable = exc.code in {429, 500, 502, 503, 504}
-                if retryable and attempt < retries:
+                detail = error_text(parsed) or str(exc.reason)
+                expected = is_duplicate(exc.code, parsed) or is_missing(exc.code, parsed)
+                if retryable and not expected and attempt < retries:
                     attempt += 1
+                    log.info("%s %s %s HTTP %s, retry %s: %s", self.name, method, target, exc.code, attempt, detail)
                     time.sleep(min(2 ** attempt, 8))
                     continue
-                detail = error_text(parsed) or str(exc.reason)
+                if expected:
+                    log.debug("%s %s %s HTTP %s: %s", self.name, method, target, exc.code, detail)
+                else:
+                    log.warning("%s %s %s HTTP %s: %s", self.name, method, target, exc.code, detail)
                 raise ApiError(exc.code, f"{self.name} HTTP {exc.code}: {detail}", parsed, retryable) from exc
             except urllib.error.URLError as exc:
                 if attempt < retries:
                     attempt += 1
+                    log.info("%s %s %s connection failed, retry %s: %s", self.name, method, target, attempt, exc.reason)
                     time.sleep(min(2 ** attempt, 8))
                     continue
+                log.warning("%s %s %s connection failed: %s", self.name, method, target, exc.reason)
                 raise ApiError(0, f"{self.name} connection failed: {exc.reason}", None, True) from exc

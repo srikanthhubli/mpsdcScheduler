@@ -37,7 +37,7 @@ from schedulermp.mapping import (
 from schedulermp.runs import StopRequested
 from schedulermp.store import utc_now
 
-log = logging.getLogger("schedulermp")
+log = logging.getLogger("schedulermp.sync")
 
 STAGES = ("GENERATING_AREA", "OWNER_DETAIL", "DRC_UPLOAD", "TRANSFER")
 _RUN = ContextVar("run_control", default=None)
@@ -75,6 +75,7 @@ class SyncService:
             return self._index
         numbers = self.tdr.certificate_numbers()
         index: dict[str, dict] = {}
+        log.info("building certificate index for %s certificate(s)", len(numbers))
 
         def fetch(number: str):
             return number, self.tdr.drc_by_certificate(number)
@@ -90,6 +91,7 @@ class SyncService:
                     continue
                 index[number] = payload
         self._index = index
+        log.info("certificate index ready: %s of %s", len(index), len(numbers))
         return index
 
     def load_bundle(self, application_id: str, owner_ids: list[str], certificate_nos: list[str], scan_certs: bool) -> Bundle:
@@ -155,8 +157,10 @@ class SyncService:
         key = job_key(mode, application_id)
         existing = self.store.job(key) or _blank_job(mode, application_id)
         if existing.get("status") == "SUCCESS" and not force:
+            log.info("%s %s skipped: already completed", mode, application_id)
             return self._report(control, application_id, existing, "SKIPPED", "Already completed")
         if existing.get("retry_count", 0) >= self.settings.max_retries and existing.get("status") == "FAILED" and not force:
+            log.info("%s %s skipped: retry limit %s", mode, application_id, existing.get("retry_count"))
             return self._report(control, application_id, existing, "SKIPPED", "Retry limit reached")
 
         job = _blank_job(mode, application_id)
@@ -166,24 +170,30 @@ class SyncService:
         job["status"] = "IN_PROGRESS"
         job["last_attempt_at"] = utc_now()
         self.store.save_job(key, job)
+        log.info("%s %s started", mode, application_id)
 
         try:
             _gate()
             _detail("LOAD", "Reading generating area, application, owners, and certificates")
             bundle = self.load_bundle(application_id, owner_ids, certificate_nos, scan_certs)
-            _detail(
-                "LOAD",
-                f"{len(bundle.owners)} owners, {len(bundle.drcs)} DRCs, {len(bundle.plots)} plots, {len(bundle.transfers)} transfers",
-                log=True,
+            loaded = (
+                f"{len(bundle.owners)} owners, {len(bundle.drcs)} DRCs, "
+                f"{len(bundle.plots)} plots, {len(bundle.transfers)} transfers"
             )
+            _detail("LOAD", loaded, log=True)
+            log.info("%s %s loaded %s", mode, application_id, loaded)
         except StopRequested:
+            log.info("%s %s stopped during load", mode, application_id)
             return self._stopped(key, job, control, application_id)
         except ApiError as exc:
+            log.warning("%s %s load failed: %s", mode, application_id, exc.message)
             return self._report(control, application_id, self._fail(key, job, "LOAD", exc.message, exc.retryable))
 
         start = 0
         if job["last_successful_stage"] in STAGES:
             start = STAGES.index(job["last_successful_stage"]) + 1
+        if start:
+            log.info("%s %s resumes after %s", mode, application_id, job["last_successful_stage"])
 
         runners = (
             self._stage_generating,
@@ -201,6 +211,7 @@ class SyncService:
                 job["stages"][stage] = outcome
                 self._callback(application_id, stage, outcome)
                 _detail(stage, f"{outcome['status']}: {outcome.get('message') or ''}", log=True)
+                _log_stage(mode, application_id, stage, outcome)
                 if outcome["status"] in {"MATCH", "SKIPPED", "DRY_RUN"}:
                     job["last_successful_stage"] = stage
                     job["last_error"] = ""
@@ -217,6 +228,7 @@ class SyncService:
                 self.store.save_job(key, job)
                 return self._report(control, application_id, job)
         except StopRequested:
+            log.info("%s %s stopped during %s", mode, application_id, job.get("current_stage") or "")
             return self._stopped(key, job, control, application_id)
 
         job["status"] = "SUCCESS"
@@ -224,6 +236,7 @@ class SyncService:
         job["retry_count"] = 0
         job["last_error"] = ""
         self.store.save_job(key, job)
+        log.info("%s %s finished SUCCESS", mode, application_id)
         return self._report(control, application_id, job)
 
     def run_legacy_batch(self, application_id: str = "", limit: int = 0, force: bool = False, control=None) -> list[dict]:
@@ -238,15 +251,18 @@ class SyncService:
         if limit:
             apps = apps[:limit]
         ids = [app_id for row in apps if (app_id := _text(row.get("application_id")))]
+        log.info("legacy batch %s application(s)%s", len(ids), " force" if force else "")
         if control:
             control.extracted(ids)
         results = []
         for index, app_id in enumerate(ids, 1):
             if control and not control.should_continue():
+                log.info("legacy batch stopped after %s application(s)", index - 1)
                 break
             if control:
                 control.begin(app_id, index)
             results.append(self.run_application("legacy", app_id, force=force, control=control))
+        log.info("legacy batch finished %s job(s)", len(results))
         return results
 
     def run_live_batch(self, limit: int = 0, control=None) -> list[dict]:
@@ -256,25 +272,30 @@ class SyncService:
         if limit:
             apps = apps[:limit]
         ids = [app_id for row in apps if (app_id := _text(row.get("application_id")))]
+        log.info("live batch %s application(s)", len(ids))
         if control:
             control.extracted(ids)
         results = []
         for index, app_id in enumerate(ids, 1):
             if control and not control.should_continue():
+                log.info("live batch stopped after %s application(s)", index - 1)
                 break
             legacy = self.store.job(job_key("legacy", app_id))
             live = self.store.job(job_key("live", app_id))
             if control:
                 control.begin(app_id, index)
             if legacy and legacy.get("status") == "SUCCESS":
+                log.info("live %s skipped: phase 2 already completed it", app_id)
                 if control:
                     control.finish(app_id, "SKIPPED", "Phase 2 already completed this application", "")
                 continue
             if live and live.get("status") == "SUCCESS":
+                log.info("live %s skipped: already completed", app_id)
                 if control:
                     control.finish(app_id, "SKIPPED", "Already completed", "")
                 continue
             results.append(self.run_application("live", app_id, force=False, control=control))
+        log.info("live batch finished %s job(s)", len(results))
         return results
 
     def _stage_generating(self, bundle: Bundle) -> dict:
@@ -283,6 +304,12 @@ class SyncService:
         body = generating_body(bundle.generating, bundle.plots, bundle.lands)
         if not body.get("p_application_id"):
             return _stage("FAILED", "p_application_id is missing from TDR generating area", retryable=False)
+        missing_plot = next((row for row in body.get("plotRecords") or [] if not _text(row.get("plot_id"))), None)
+        if missing_plot:
+            return _stage("FAILED", "A plot record is missing plot_id", retryable=False)
+        missing_land = next((row for row in body.get("landRecords") or [] if not _text(row.get("land_id"))), None)
+        if missing_land:
+            return _stage("FAILED", "A land record is missing land_id", retryable=False)
         if self.settings.dry_run:
             return _stage("DRY_RUN", "InsertGeneratingArea not sent", payload_keys=list(body.keys()))
         try:
@@ -394,6 +421,8 @@ class SyncService:
                 params = body.get("param_array") or [{}]
                 first = params[0] if params and isinstance(params[0], dict) else {}
                 requested = _number(first.get("trn_value_tdr"))
+                if requested <= 0:
+                    continue
                 remaining = _remaining_for(bundle, body.get("certificate_no"))
                 if remaining is not None and requested > remaining:
                     return _stage(
@@ -473,6 +502,18 @@ class SyncService:
         except Exception as exc:  # callback must not hide the blockchain result
             log.warning("migration callback failed: %s", exc)
             outcome["callback_error"] = str(exc)
+
+
+def _log_stage(mode: str, application_id: str, stage: str, outcome: dict) -> None:
+    message = outcome.get("message") or ""
+    status = outcome.get("status") or ""
+    fields = [item.get("field") for item in outcome.get("diffs") or [] if isinstance(item, dict) and item.get("field")]
+    suffix = f" fields={','.join(str(field) for field in fields[:12])}" if fields else ""
+    line = "%s %s %s %s: %s%s"
+    if status in {"FAILED", "API_FAILURE", "MISMATCH"}:
+        log.warning(line, mode, application_id, stage, status, message, suffix)
+        return
+    log.info(line, mode, application_id, stage, status, message, suffix)
 
 
 def _drc_message(prefix: str, rows: list) -> str:

@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import os
 
@@ -28,8 +29,24 @@ def build_app() -> SchedulerApp:
     return SchedulerApp(settings, TdrClient(settings), ChainClient(settings), store)
 
 
+def configure_logging() -> None:
+    level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, None)
+    if not isinstance(level, int):
+        level = logging.INFO
+        level_name = "INFO"
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+    logging.getLogger("schedulermp").setLevel(level)
+    logging.getLogger("schedulermp").info("log level %s", level_name)
+
+
 def main(argv: list[str] | None = None) -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    load_dotenv()
+    configure_logging()
     parser = argparse.ArgumentParser(description="TDR to MP blockchain scheduler")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -69,8 +86,6 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def print_result(payload: dict) -> None:
-    import json
-
     print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 

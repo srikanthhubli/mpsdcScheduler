@@ -187,8 +187,8 @@ def generating_body(source: dict, plots: list[dict], lands: list[dict]) -> dict:
                 body[dest] = source[src]
     body.setdefault("p_insertedby_ipddress", source.get("insertedby_ipddress") or source.get("p_insertedby_ipddress") or "")
     body.setdefault("p_transferto", source.get("p_transferto") if source.get("p_transferto") is not None else 0)
-    body["landRecords"] = lands
-    body["plotRecords"] = [to_plot(row) if "plot_no" in row or "colony_name" in row else row for row in plots]
+    body["landRecords"] = [to_land(row) for row in lands]
+    body["plotRecords"] = [to_plot(row) for row in plots]
     return body
 
 

@@ -5,7 +5,7 @@ import unittest
 from schedulermp.bundle import Bundle
 from schedulermp.compare import chain_owner_canonical, diff_maps, drc_canonical, generating_canonical, owner_canonical
 from schedulermp.config import Settings
-from schedulermp.http_client import ApiError
+from schedulermp.http_client import ApiError, is_duplicate
 from schedulermp.mapping import chain_action, drc_body, generating_body, owner_body, valid_flg
 from schedulermp.phase1 import verify_certificate, verifications_csv
 from schedulermp.pipeline import SyncService
@@ -240,6 +240,7 @@ class MappingTests(unittest.TestCase):
         self.assertEqual(body["p_application_id"], "TDR202471184557197")
         self.assertIn("Outside municipal area", body["p_project_location"])
         self.assertEqual(body["plotRecords"][0]["plot_id"], "171")
+        self.assertTrue(body["plotRecords"][0]["plot_id"])
         owner = owner_body(bundle.owners[0], bundle.application_id, bundle.docs)
         self.assertEqual(owner["owner_type"], "PLOT")
         self.assertEqual(owner["applicationid"], "TDR202471184557197")
@@ -303,6 +304,15 @@ class MappingTests(unittest.TestCase):
         body = generating_body(TDR_DRC["data"][0]["project_details"][0], [], [])
         self.assertEqual(body["p_project_name"], "Mhow Naka to Tori Corner")
         self.assertEqual(body["p_implementation_agency"], "Indore Municipal Corporation")
+
+    def test_repeat_owner_is_treated_as_already_stored(self):
+        body = {
+            "success": False,
+            "message": "Duplicate Owner ID",
+            "error": "Owner ID 101 is already registered under Application ID TDR202471184557197",
+            "code": "DUPLICATE_OWNER",
+        }
+        self.assertTrue(is_duplicate(400, body))
 
 
 class PhaseTests(unittest.TestCase):

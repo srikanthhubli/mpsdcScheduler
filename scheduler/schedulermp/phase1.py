@@ -10,7 +10,7 @@ from schedulermp.http_client import ApiError, is_missing
 from schedulermp.mapping import _text, chain_action, drc_body, lists_from_payload
 from schedulermp.store import utc_now
 
-log = logging.getLogger("schedulermp")
+log = logging.getLogger("schedulermp.phase1")
 
 
 def verify_certificate(tdr, chain, certificate_no: str) -> dict:
@@ -75,10 +75,16 @@ def run_phase1(tdr, chain, store, certificate_no: str = "", limit: int = 0, conc
 
     results = []
     workers = max(1, concurrency)
+    log.info("phase 1 checking %s certificate(s)", len(numbers))
 
     def one(number: str):
         record = verify_certificate(tdr, chain, number)
         store.save_verification(number, record)
+        status = record["status"]
+        if status == "MATCH":
+            log.debug("phase 1 %s MATCH flg=%s", number, record.get("flg") or "")
+        else:
+            log.warning("phase 1 %s %s: %s", number, status, record.get("message") or "")
         return record
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -89,7 +95,14 @@ def run_phase1(tdr, chain, store, certificate_no: str = "", limit: int = 0, conc
     summary = {"total": len(results), "MATCH": 0, "MISMATCH": 0, "NOT_FOUND": 0, "API_FAILURE": 0}
     for record in results:
         summary[record["status"]] = summary.get(record["status"], 0) + 1
-    log.info("phase 1 finished %s", summary)
+    log.info(
+        "phase 1 finished total=%s match=%s mismatch=%s not_found=%s api_failure=%s",
+        summary["total"],
+        summary["MATCH"],
+        summary["MISMATCH"],
+        summary["NOT_FOUND"],
+        summary["API_FAILURE"],
+    )
     return {"summary": summary, "results": results}
 
 

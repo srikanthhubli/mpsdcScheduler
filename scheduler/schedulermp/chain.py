@@ -1,7 +1,10 @@
 import urllib.parse
+import logging
 
 from schedulermp.config import Settings
 from schedulermp.http_client import ApiError, HttpClient, error_text, is_duplicate, is_missing
+
+log = logging.getLogger("schedulermp.chain")
 
 
 class ChainClient:
@@ -72,6 +75,7 @@ class ChainClient:
         except ApiError as exc:
             if is_duplicate(exc.status, exc.body):
                 stored = exc.body if isinstance(exc.body, dict) else {}
+                log.info("blockchain %s already stored: %s", path, error_text(exc.body))
                 return {**stored, "duplicate": True, "error": error_text(exc.body)}
             raise
 

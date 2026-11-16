@@ -1,5 +1,6 @@
 import unittest
 
+from schedulermp.http_client import safe_url
 from schedulermp.server import _id_list, _limit
 
 
@@ -17,6 +18,12 @@ class RequestShapeTests(unittest.TestCase):
         self.assertEqual(_id_list("101, 102", "ownerIds"), ["101", "102"])
         with self.assertRaises(ValueError):
             _id_list({"owner": 1}, "ownerIds")
+
+    def test_log_url_hides_keys(self):
+        url = safe_url("https://example.test/Agency/GetDRCDetails?certificateNumber=DRC/1&api_key=secret")
+        self.assertIn("certificateNumber=DRC%2F1", url)
+        self.assertIn("api_key=%2A%2A%2A", url)
+        self.assertNotIn("secret", url)
 
 
 if __name__ == "__main__":
