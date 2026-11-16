@@ -15,16 +15,43 @@ Owner and DRC reads use the v1.4 envelope (`success`, `statusCode`, `message`, `
 
 Phase 1 only compares DRCs. It does not write. Phase 2 migrates the application list. Phase 3 syncs one live application, or polls ids that are not already `SUCCESS`.
 
+Run these from this directory. The same process serves the API and the admin screen in `../frontend/`.
+
 ```bash
 cp .env.example .env
+```
+
+Set `BLOCKCHAIN_API_KEY`. Change `ADMIN_PASSWORD` on the server. Leave `HTTP_HOST=0.0.0.0` and `HTTP_PORT=8088` so a browser can open the screen.
+
+```bash
 python3 -m schedulermp serve
+```
+
+That stays in the terminal. For a background process that restarts if it exits:
+
+```bash
+chmod +x tdrctl
+./tdrctl start
+./tdrctl status
+./tdrctl logs -f
+./tdrctl restart
+./tdrctl stop
+```
+
+As root, `python3 -m schedulermp install` registers systemd service `tdr-scheduler` and starts it on boot. After that, `./tdrctl` controls the service.
+
+Open `http://<server>:8088/` and sign in with `ADMIN_USERNAME` and `ADMIN_PASSWORD`. The sample values are `admin` and `admin`. Do not open `frontend/index.html` as a file.
+
+One-off runs, without the screen:
+
+```bash
 python3 -m schedulermp phase1 --certificate "DRC/2024/00002/Indore"
 python3 -m schedulermp phase2 --application-id TDR202471184557197
 python3 -m schedulermp phase3 --application-id TDR202471184557197 --certificate "DRC/2024/00002/Indore"
 python3 -m unittest tests.test_sync
 ```
 
-`DRY_RUN=true` builds bodies and does not POST them. The admin screen is served at `http://127.0.0.1:8088/`. Sign in as `admin`. The full run and test steps are in `../TESTING.md`.
+`DRY_RUN=true` builds bodies and does not POST them. The full screen checks are in `../TESTING.md`.
 
 Postman: `postman/TDR-Scheduler.postman_collection.json`.
 

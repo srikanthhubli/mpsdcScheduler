@@ -48,11 +48,17 @@ def configure_logging() -> None:
 
 def main(argv: list[str] | None = None) -> None:
     load_dotenv()
-    configure_logging()
     parser = argparse.ArgumentParser(description="TDR to MP blockchain scheduler")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("serve", help="run the HTTP API and enabled phase loops")
+    sub.add_parser("serve", help="run the HTTP API and enabled phase loops in this terminal")
+    sub.add_parser("start", help="run serve in the background and restart it if it exits")
+    sub.add_parser("stop", help="stop the background scheduler")
+    sub.add_parser("restart", help="stop and start the background scheduler")
+    sub.add_parser("status", help="show whether the background scheduler is running")
+    logs = sub.add_parser("logs", help="show the background scheduler log")
+    logs.add_argument("-f", "--follow", action="store_true", help="keep printing new log lines")
+    sub.add_parser("install", help="install a systemd service that starts on boot")
 
     phase1 = sub.add_parser("phase1", help="verify DRC certificates against blockchain")
     phase1.add_argument("--certificate", default="")
@@ -71,6 +77,12 @@ def main(argv: list[str] | None = None) -> None:
     phase3.add_argument("--force", action="store_true")
 
     args = parser.parse_args(argv)
+    if args.command in {"start", "stop", "restart", "status", "logs", "install"}:
+        from schedulermp.keeper import run
+
+        run(args)
+        return
+    configure_logging()
     app = build_app()
     if args.command == "serve":
         serve(app)
