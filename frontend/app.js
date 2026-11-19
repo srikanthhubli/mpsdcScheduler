@@ -275,8 +275,26 @@ function phase1Table(row) {
     </tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
+function itemRecords(item) {
+  if (Array.isArray(item.records) && item.records.length) return item.records;
+  const saved = state.verifications[item.applicationId];
+  if (saved && Array.isArray(saved.records) && saved.records.length) return saved.records;
+  if (saved && Array.isArray(saved.diffs) && saved.diffs.length) {
+    return [{
+      kind: "DRC",
+      label: saved.certificate_no || item.applicationId,
+      status: saved.status || item.status,
+      message: "",
+      diffs: saved.diffs,
+      tdr_api: saved.tdr_api || "",
+      blockchain_api: saved.blockchain_api || "",
+    }];
+  }
+  return [];
+}
+
 function runSummary(item) {
-  const records = item.records || [];
+  const records = itemRecords(item);
   if (!records.length) return runLine(item);
   const differed = records.filter((record) => ["MISMATCH", "FAILED", "API_FAILURE", "NOT_FOUND"].includes(record.status));
   if (!differed.length) return `${records.length} record(s) match`;
@@ -537,6 +555,14 @@ async function pollRuns() {
     noteTransitions(runs);
     state.runs = runs;
     if (state.screen === "run") {
+      const phase1Items = (runs.phase1 && runs.phase1.items) || [];
+      if (phase1Items.some((item) => item.status && item.status !== "PENDING" && item.status !== "RUNNING")) {
+        try {
+          state.verifications = (await api("/verifications")).verifications || {};
+        } catch (_error) {
+          /* the run row still paints from /runs */
+        }
+      }
       paintRun(1, runs.phase1);
       paintRun(2, runs.phase2);
       paintRun(3, runs.phase3);
@@ -628,7 +654,7 @@ function paintRun(phase, run) {
         <span>${pill(item.status)}</span>
         <span>${escapeHtml(runSummary(item))}</span>
       </div>
-      ${item.records && item.records.length ? phase1Table(item) : ""}
+      ${(() => { const records = itemRecords(item); return records.length ? phase1Table({ records }) : ""; })()}
     </li>`).join("") || `<li><span>No ${noun}s yet.</span></li>`;
   if (atBottom) list.scrollTop = list.scrollHeight;
   root.querySelector(".run-log").textContent = (data.log || []).slice(-40).join("\n");

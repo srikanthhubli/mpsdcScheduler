@@ -162,7 +162,7 @@ def run_phase1(tdr, chain, store, certificate_no: str = "", limit: int = 0, conc
             f" {detail}" if detail else "",
         )
         if control:
-            control.finish(number, status, message, record.get("chain_action") or "", record.get("records") or [])
+            control.finish(number, status, message, "", record.get("records") or [])
         return record
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
