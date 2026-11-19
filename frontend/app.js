@@ -180,7 +180,7 @@ function renderVerifications() {
           <td>${escapeHtml(row.flg || "")}</td>
           <td>${escapeHtml(chainWord(row))}</td>
           <td>${pill(row.status)}</td>
-          <td class="${problemClass(row.status)}">${escapeHtml(row.message || "")}${diffTable(row.diffs || [])}</td>
+          <td class="${problemClass(row.status)}">${verificationReport(row)}</td>
           <td>${escapeHtml(row.checked_at || "")}</td>
           <td><button type="button" class="secondary" data-cert="${escapeAttr(row.certificate_no)}">Diff</button></td>
         </tr>`).join("") || `<tr><td colspan="8">No verifications yet.</td></tr>`}
@@ -206,7 +206,7 @@ function renderVerifications() {
   main.querySelectorAll("[data-cert]").forEach((button) => {
     button.addEventListener("click", () => showVerification(button.dataset.cert));
   });
-  if (state.detail) document.querySelector("#vdetail").innerHTML = `<h2>${escapeHtml(state.detail.certificate_no)} ${pill(state.detail.status)}</h2><p>${escapeHtml(state.detail.message || "")}</p>${diffTable(state.detail.diffs || [])}`;
+  if (state.detail) document.querySelector("#vdetail").innerHTML = `<h2>${escapeHtml(state.detail.certificate_no)} ${pill(state.detail.status)}</h2><p>${escapeHtml(state.detail.message || "")}</p>${verificationReport(state.detail)}`;
 }
 
 function failedStage(row) {
@@ -238,6 +238,21 @@ function receivedCell(diff, side) {
   const shown = raw === undefined || raw === null || raw === "" ? "blank" : String(raw);
   const field = diff[fieldKey] ? `<div class="diff-key">${escapeHtml(diff[fieldKey])}</div>` : "";
   return `<td>${field}${escapeHtml(shown)}</td>`;
+}
+
+function verificationReport(row) {
+  if (Array.isArray(row.records) && row.records.length) return phase1Table(row);
+  return `${escapeHtml(row.message || "")}${diffTable(row.diffs || [])}`;
+}
+
+function phase1Table(row) {
+  const body = row.records.map((record) => `<tr class="${problemClass(record.status)}">
+      <td>${escapeHtml(record.kind || "")}</td>
+      <td>${escapeHtml(record.label || "")}</td>
+      <td>${pill(record.status)}</td>
+      <td>${escapeHtml(record.message || "")}${diffTable(record.diffs || [])}</td>
+    </tr>`).join("");
+  return `<table class="diff-table"><thead><tr><th>Record</th><th>Id</th><th>Status</th><th>Received from TDR and blockchain</th></tr></thead><tbody>${body}</tbody></table>`;
 }
 
 function diffTable(diffs) {
