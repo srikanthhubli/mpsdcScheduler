@@ -120,6 +120,8 @@ class RunControl:
             label = STAGE_LABELS.get(stage, stage)
             suffix = f" · {label}" if label else ""
             self._log(f"{application_id} {status}{suffix}: {message}")
+            for line in _record_lines(records or []):
+                self._log(f"{application_id} | {line}")
 
     def complete(self, message: str) -> None:
         with self._lock:
@@ -219,6 +221,36 @@ class RunBoard:
     def _one(self, phase: int) -> dict:
         control = self.control(phase)
         return control.snapshot() if control else idle_run(phase)
+
+
+def _record_lines(records: list) -> list[str]:
+    lines = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        diffs = record.get("diffs") or []
+        if not diffs:
+            lines.append(f"{record.get('kind') or ''} | {record.get('label') or ''} | {record.get('status') or ''} | {record.get('message') or ''}")
+            continue
+        for diff in diffs:
+            if not isinstance(diff, dict):
+                continue
+            tdr = diff.get("tdr_received", diff.get("tdr"))
+            chain = diff.get("blockchain_received", diff.get("blockchain"))
+            lines.append(
+                " | ".join(
+                    [
+                        str(record.get("kind") or ""),
+                        str(record.get("label") or ""),
+                        str(diff.get("field") or ""),
+                        f"TDR {tdr if tdr not in (None, '') else 'blank'}",
+                        str(diff.get("tdr_api") or ""),
+                        f"blockchain {chain if chain not in (None, '') else 'blank'}",
+                        str(diff.get("blockchain_api") or ""),
+                    ]
+                )
+            )
+    return lines
 
 
 def _counts(items: list[dict]) -> dict:

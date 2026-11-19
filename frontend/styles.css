@@ -189,6 +189,7 @@ form.grid label:has(input[type="checkbox"]) {
 .run-list .table-wrap { overflow-x: auto; margin-top: 8px; }
 .run-list li { display: block; padding: 8px 2px; border-bottom: 1px solid var(--line); }
 .run-row { display: grid; grid-template-columns: minmax(180px, 1.3fr) 120px minmax(0, 1.6fr); gap: 8px; align-items: center; }
+.run-detail { margin-top: 12px; }
 .run-log { margin-top: 12px; max-height: 240px; overflow: auto; color: #6d655b; font-size: 13px; white-space: pre-wrap; }
 .problem { color: #8d2f23; font-weight: 650; }
 tr.mismatch td { background: #fde8e4; }

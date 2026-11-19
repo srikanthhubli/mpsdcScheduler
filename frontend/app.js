@@ -627,6 +627,7 @@ function paintRun(phase, run) {
         </div>
       </div>
       <ol class="run-list"></ol>
+      <div class="run-detail"></div>
       <div class="run-log"></div>`;
     root.dataset.ready = "1";
   }
@@ -654,10 +655,23 @@ function paintRun(phase, run) {
         <span>${pill(item.status)}</span>
         <span>${escapeHtml(runSummary(item))}</span>
       </div>
-      ${(() => { const records = itemRecords(item); return records.length ? phase1Table({ records }) : ""; })()}
     </li>`).join("") || `<li><span>No ${noun}s yet.</span></li>`;
   if (atBottom) list.scrollTop = list.scrollHeight;
+  const detail = root.querySelector(".run-detail");
+  if (detail) detail.innerHTML = runDetail(data.items || []);
   root.querySelector(".run-log").textContent = (data.log || []).slice(-40).join("\n");
+}
+
+function runDetail(items) {
+  const blocks = items.map((item) => {
+    const records = itemRecords(item);
+    if (!records.length) return "";
+    return `<section class="stage-block ${problemClass(item.status)}">
+      <h3>${escapeHtml(item.applicationId)} ${pill(item.status)}</h3>
+      ${phase1Table({ records })}
+    </section>`;
+  }).join("");
+  return blocks;
 }
 
 function runLine(item) {
