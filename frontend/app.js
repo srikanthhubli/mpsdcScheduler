@@ -246,13 +246,41 @@ function verificationReport(row) {
 }
 
 function phase1Table(row) {
-  const body = row.records.map((record) => `<tr class="${problemClass(record.status)}">
-      <td>${escapeHtml(record.kind || "")}</td>
-      <td>${escapeHtml(record.label || "")}</td>
-      <td>${pill(record.status)}</td>
-      <td>${escapeHtml(record.message || "")}${diffTable(record.diffs || [])}</td>
-    </tr>`).join("");
-  return `<table class="diff-table"><thead><tr><th>Record</th><th>Id</th><th>Status</th><th>Received from TDR and blockchain</th></tr></thead><tbody>${body}</tbody></table>`;
+  const records = row.records || [];
+  const body = records.map((record) => {
+    const diffs = Array.isArray(record.diffs) ? record.diffs : [];
+    if (!diffs.length) {
+      return `<tr class="${problemClass(record.status)}">
+        <td>${escapeHtml(record.kind || "")}</td>
+        <td>${escapeHtml(record.label || "")}</td>
+        <td>${pill(record.status)}</td>
+        <td colspan="5">${escapeHtml(record.message || "")}</td>
+      </tr>`;
+    }
+    return diffs.map((diff) => `<tr class="${problemClass(record.status)}">
+        <td>${escapeHtml(record.kind || "")}</td>
+        <td>${escapeHtml(record.label || "")}</td>
+        <td>${pill(record.status)}</td>
+        <td>${escapeHtml(diff.field || "")}</td>
+        ${receivedCell(diff, "tdr")}
+        <td>${escapeHtml(diff.tdr_api || record.tdr_api || "")}</td>
+        ${receivedCell(diff, "blockchain")}
+        <td>${escapeHtml(diff.blockchain_api || record.blockchain_api || "")}</td>
+      </tr>`).join("");
+  }).join("");
+  return `<div class="table-wrap"><table class="diff-table"><thead><tr>
+      <th>Record</th><th>Id</th><th>Status</th><th>Field</th>
+      <th>Received from TDR</th><th>TDR API</th>
+      <th>Received from blockchain</th><th>Blockchain API</th>
+    </tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+function runSummary(item) {
+  const records = item.records || [];
+  if (!records.length) return runLine(item);
+  const differed = records.filter((record) => ["MISMATCH", "FAILED", "API_FAILURE", "NOT_FOUND"].includes(record.status));
+  if (!differed.length) return `${records.length} record(s) match`;
+  return `${differed.length} of ${records.length} record(s) differ`;
 }
 
 function diffTable(diffs) {
@@ -598,7 +626,7 @@ function paintRun(phase, run) {
       <div class="run-row">
         <span>${escapeHtml(item.applicationId)}</span>
         <span>${pill(item.status)}</span>
-        <span>${escapeHtml(runLine(item))}</span>
+        <span>${escapeHtml(runSummary(item))}</span>
       </div>
       ${item.records && item.records.length ? phase1Table(item) : ""}
     </li>`).join("") || `<li><span>No ${noun}s yet.</span></li>`;

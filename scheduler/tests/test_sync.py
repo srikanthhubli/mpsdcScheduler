@@ -319,7 +319,8 @@ class PhaseTests(unittest.TestCase):
     def test_phase1_missing_on_chain_is_mismatch(self):
         record = verify_certificate(FakeTdr(), FakeChain(), "DRC/2024/00002/Indore")
         self.assertEqual(record["status"], "MISMATCH")
-        self.assertIn("missing on blockchain", record["message"])
+        self.assertIn("record(s) differ", record["message"])
+        self.assertEqual(record["records"][0]["message"], "missing on blockchain")
         self.assertEqual(record["diffs"][0]["blockchain_api"], "GET /Agency/GetDRCDetails")
         kinds = [item["kind"] for item in record["records"]]
         self.assertEqual(kinds, ["DRC", "Owner", "Generating area"])

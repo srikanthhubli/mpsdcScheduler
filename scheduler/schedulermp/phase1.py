@@ -150,14 +150,16 @@ def run_phase1(tdr, chain, store, certificate_no: str = "", limit: int = 0, conc
         store.save_verification(number, record)
         status = record["status"]
         message = record.get("message") or ""
+        detail = describe_diffs(record.get("diffs") or [])
         log.info(
-            "phase 1 %s %s flg=%s action=%s on_chain=%s: %s",
+            "phase 1 %s %s flg=%s action=%s on_chain=%s: %s%s",
             number,
             status,
             record.get("flg") or "",
             record.get("chain_action") or "",
             record.get("on_chain"),
             message,
+            f" {detail}" if detail else "",
         )
         if control:
             control.finish(number, status, message, record.get("chain_action") or "", record.get("records") or [])
@@ -259,8 +261,7 @@ def _compared_record(kind: str, label: str, diffs: list, tdr_api: str, blockchai
     for item in diffs:
         item["record"] = label
     if diffs:
-        detail = describe_diffs(diffs)
-        message = f"differs. {detail}" if detail else "differs"
+        message = "differs"
         status = "MISMATCH"
     else:
         message = "matches"
@@ -281,9 +282,9 @@ def _bundle_result(records: list, application_id: str, flg: str, action: str, on
         status = "NOT_FOUND"
     else:
         status = "MATCH"
-    parts = [f"{record['label']}: {record['message']}" for record in records if record["status"] != "MATCH"]
-    if parts:
-        message = "; ".join(parts)
+    differed = [record for record in records if record["status"] != "MATCH"]
+    if differed:
+        message = f"{len(differed)} of {len(records)} record(s) differ"
     else:
         message = f"{len(records)} record(s) match"
     return _result(
