@@ -201,33 +201,100 @@ class SchedulerApp:
         schedule[group]["message"] = message
         self.store.save_schedule(schedule)
 
-    def run_phase1(self, certificate_no: str = "", limit: int = 0) -> dict:
-        with self.locks["phase1"]:
-            return run_phase1(
-                self.tdr,
-                self.chain,
-                self.store,
-                certificate_no=certificate_no,
-                limit=limit,
-                concurrency=self.settings.phase1_concurrency,
-            )
+    def _launch(self, phase: int, worker) -> dict:
+        lock = self.locks[f"phase{phase}"]
+        if not lock.acquire(blocking=False):
+            raise RunBusy(f"Phase {phase} is already running")
+        control = self.runs.attach(phase)
 
-    def run_phase2(self, application_id: str = "", limit: int = 0, force: bool = False, one_shot: bool = False) -> dict:
+        def wrapped() -> None:
+            try:
+                worker(control)
+            except Exception as exc:
+                log.exception("phase %s failed", phase)
+                control.fail(str(exc))
+            finally:
+                lock.release()
+
+        threading.Thread(target=wrapped, name=f"phase{phase}", daemon=True).start()
+        log.info("phase %s started in the background", phase)
+        return {
+            "status": "STARTED",
+            "message": f"Phase {phase} started. Progress stays on the Run screen and in the scheduler log.",
+            "run": control.snapshot(),
+        }
+
+    def _finish_phase1(self, control, certificate_no: str, limit: int) -> dict:
+        result = run_phase1(
+            self.tdr,
+            self.chain,
+            self.store,
+            certificate_no=certificate_no,
+            limit=limit,
+            concurrency=self.settings.phase1_concurrency,
+            control=control,
+        )
+        summary = result["summary"]
+        if result.get("stopped"):
+            message = (
+                f"Phase 1 stopped. {summary['MATCH']} match, {summary['MISMATCH']} mismatch, "
+                f"{summary['NOT_FOUND']} not found, {summary['API_FAILURE']} API failure."
+            )
+        else:
+            message = (
+                f"Phase 1 finished. {summary['MATCH']} match, {summary['MISMATCH']} mismatch, "
+                f"{summary['NOT_FOUND']} not found, {summary['API_FAILURE']} API failure."
+            )
+        control.complete(message)
+        log.info(message)
+        result["run"] = control.snapshot()
+        return result
+
+    def run_phase1(self, certificate_no: str = "", limit: int = 0, background: bool = False) -> dict:
+        if background:
+            return self._launch(1, lambda control: self._finish_phase1(control, certificate_no, limit))
+        with self.locks["phase1"]:
+            control = self.runs.attach(1)
+            try:
+                return self._finish_phase1(control, certificate_no, limit)
+            except Exception as exc:
+                control.fail(str(exc))
+                raise
+
+    def run_phase2(self, application_id: str = "", limit: int = 0, force: bool = False, one_shot: bool = False, background: bool = False) -> dict:
+        if background:
+            return self._launch(
+                2,
+                lambda control: self._finish_phase2(control, application_id, limit, force, one_shot),
+            )
         if not self.locks["phase2"].acquire(blocking=False):
             raise RunBusy("Phase 2 is already running")
         control = self.runs.attach(2)
         try:
-            results = self.sync.run_legacy_batch(application_id, limit, force, control=control)
-            stopped = control.snapshot()["status"] == "STOPPING" or control._stop.is_set()
-            control.complete("Stopped" if stopped else f"Finished {len(results)} application(s)")
-            result = {"count": len(results), "jobs": results, "run": control.snapshot()}
-            self._after_legacy(result, one_shot=one_shot)
-            return result
+            return self._finish_phase2(control, application_id, limit, force, one_shot)
         except Exception as exc:
             control.fail(str(exc))
             raise
         finally:
             self.locks["phase2"].release()
+
+    def _finish_phase2(self, control, application_id: str, limit: int, force: bool, one_shot: bool) -> dict:
+        results = self.sync.run_legacy_batch(application_id, limit, force, control=control)
+        stopped = control._stop.is_set()
+        control.complete("Phase 2 stopped" if stopped else "Phase 2 finished")
+        counts = control.snapshot()["counts"]
+        message = (
+            f"{'Phase 2 stopped' if stopped else 'Phase 2 finished'}. "
+            f"{counts.get('SUCCESS', 0)} succeeded, {counts.get('FAILED', 0)} failed, "
+            f"{counts.get('SKIPPED', 0)} skipped, {counts.get('NOT_STARTED', 0)} not started."
+        )
+        with control._lock:
+            control.state["message"] = message
+            control._log(message)
+        log.info(message)
+        result = {"count": len(results), "jobs": results, "run": control.snapshot()}
+        self._after_legacy(result, one_shot=one_shot)
+        return result
 
     def run_phase3(
         self,
@@ -236,37 +303,56 @@ class SchedulerApp:
         certificate_nos: list[str] | None = None,
         force: bool = False,
         limit: int = 0,
+        background: bool = False,
     ) -> dict:
+        if background:
+            return self._launch(
+                3,
+                lambda control: self._finish_phase3(control, application_id, owner_ids, certificate_nos, force, limit),
+            )
         if not self.locks["phase3"].acquire(blocking=False):
             raise RunBusy("Phase 3 is already running")
         control = self.runs.attach(3)
         try:
-            if application_id:
-                control.note(f"Using application {application_id}")
-                control.extracted([application_id])
-                if control.should_continue():
-                    control.begin(application_id, 1)
-                    job = self.sync.run_application(
-                        "live",
-                        application_id,
-                        owner_ids or [],
-                        certificate_nos or [],
-                        force=force,
-                        control=control,
-                    )
-                    results = [job]
-                else:
-                    results = []
-            else:
-                results = self.sync.run_live_batch(limit, control=control)
-            stopped = control._stop.is_set()
-            control.complete("Stopped" if stopped else f"Finished {len(results)} application(s)")
-            return {"count": len(results), "jobs": results, "run": control.snapshot()}
+            return self._finish_phase3(control, application_id, owner_ids, certificate_nos, force, limit)
         except Exception as exc:
             control.fail(str(exc))
             raise
         finally:
             self.locks["phase3"].release()
+
+    def _finish_phase3(self, control, application_id, owner_ids, certificate_nos, force, limit) -> dict:
+        if application_id:
+            control.note(f"Using application {application_id}")
+            control.extracted([application_id])
+            if control.should_continue():
+                control.begin(application_id, 1)
+                job = self.sync.run_application(
+                    "live",
+                    application_id,
+                    owner_ids or [],
+                    certificate_nos or [],
+                    force=force,
+                    control=control,
+                )
+                results = [job]
+            else:
+                results = []
+        else:
+            results = self.sync.run_live_batch(limit, control=control)
+        stopped = control._stop.is_set()
+        control.complete("Phase 3 stopped" if stopped else "Phase 3 finished")
+        counts = control.snapshot()["counts"]
+        message = (
+            f"{'Phase 3 stopped' if stopped else 'Phase 3 finished'}. "
+            f"{counts.get('SUCCESS', 0)} succeeded, {counts.get('FAILED', 0)} failed, "
+            f"{counts.get('SKIPPED', 0)} skipped, {counts.get('NOT_STARTED', 0)} not started."
+        )
+        with control._lock:
+            control.state["message"] = message
+            control._log(message)
+        log.info(message)
+        return {"count": len(results), "jobs": results, "run": control.snapshot()}
 
     def run_command(self, phase: int, action: str) -> dict:
         control = self.runs.control(phase)
@@ -477,8 +563,13 @@ def make_handler(app: SchedulerApp):
                 query = self._query()
                 limit = _limit(body, query)
                 force = _flag(body.get("force") if "force" in body else query.get("force"))
+                background = _flag(body.get("background") or query.get("background"))
                 if parsed.path == "/run/phase1":
-                    result = app.run_phase1(_text(body.get("certificate") or query.get("certificate")), limit)
+                    result = app.run_phase1(
+                        _text(body.get("certificate") or query.get("certificate")),
+                        limit,
+                        background=background,
+                    )
                     self._json(200, result)
                     return
                 if parsed.path == "/run/phase2":
@@ -487,6 +578,7 @@ def make_handler(app: SchedulerApp):
                         limit,
                         force,
                         one_shot=_flag(body.get("oneShot") or query.get("oneShot")),
+                        background=background,
                     )
                     self._json(200, result)
                     return
@@ -500,6 +592,7 @@ def make_handler(app: SchedulerApp):
                         _id_list(body.get("certificateNos"), "certificateNos"),
                         force,
                         limit,
+                        background=background,
                     )
                     self._json(200, result)
                     return
@@ -569,7 +662,7 @@ def _run_action(path: str) -> tuple[int, str] | None:
     parts = path.strip("/").split("/")
     if len(parts) != 3 or parts[0] != "runs":
         return None
-    phase = {"phase2": 2, "phase3": 3}.get(parts[1])
+    phase = {"phase1": 1, "phase2": 2, "phase3": 3}.get(parts[1])
     action = {"pause": "pause", "resume": "resume", "stop": "request_stop"}.get(parts[2])
     if phase and action:
         return phase, action

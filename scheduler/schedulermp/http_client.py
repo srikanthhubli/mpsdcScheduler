@@ -146,7 +146,7 @@ class HttpClient:
                     raw = resp.read().decode("utf-8")
                     elapsed = int((time.monotonic() - started) * 1000)
                     if not raw:
-                        log.debug("%s %s %s %s %sms", self.name, method, target, resp.status, elapsed)
+                        log.info("%s %s %s %s %sms", self.name, method, target, resp.status, elapsed)
                         return resp.status, {}
                     try:
                         parsed = json.loads(raw)
@@ -158,7 +158,7 @@ class HttpClient:
                             {"error": raw[:500]},
                             False,
                         )
-                    log.debug("%s %s %s %s %sms", self.name, method, target, resp.status, elapsed)
+                    log.info("%s %s %s %s %sms", self.name, method, target, resp.status, elapsed)
                     return resp.status, parsed
             except urllib.error.HTTPError as exc:
                 raw = exc.read().decode("utf-8", errors="replace")

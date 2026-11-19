@@ -252,6 +252,8 @@ class SyncService:
             apps = apps[:limit]
         ids = [app_id for row in apps if (app_id := _text(row.get("application_id")))]
         log.info("legacy batch %s application(s)%s", len(ids), " force" if force else "")
+        for app_id in ids:
+            log.info("legacy queued %s", app_id)
         if control:
             control.extracted(ids)
         results = []
@@ -273,6 +275,8 @@ class SyncService:
             apps = apps[:limit]
         ids = [app_id for row in apps if (app_id := _text(row.get("application_id")))]
         log.info("live batch %s application(s)", len(ids))
+        for app_id in ids:
+            log.info("live queued %s", app_id)
         if control:
             control.extracted(ids)
         results = []

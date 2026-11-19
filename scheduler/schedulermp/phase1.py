@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from schedulermp.compare import diff_maps, drc_canonical, unwrap_chain_drc
@@ -65,45 +66,71 @@ def verify_certificate(tdr, chain, certificate_no: str) -> dict:
     return _result("MATCH", "DRC fields match", application_id=expected["application_id"], flg=flg, chain_action=action, on_chain=True)
 
 
-def run_phase1(tdr, chain, store, certificate_no: str = "", limit: int = 0, concurrency: int = 4) -> dict:
+def run_phase1(tdr, chain, store, certificate_no: str = "", limit: int = 0, concurrency: int = 4, control=None) -> dict:
     if certificate_no:
         numbers = [certificate_no]
     else:
         numbers = tdr.certificate_numbers()
     if limit:
         numbers = numbers[:limit]
+    if control:
+        control.extracted(numbers, "certificate")
+        for number in numbers:
+            log.info("phase 1 queued %s", number)
 
     results = []
     workers = max(1, concurrency)
     log.info("phase 1 checking %s certificate(s)", len(numbers))
+    order = {"n": 0}
+    order_lock = threading.Lock()
 
     def one(number: str):
+        if control and not control.should_continue():
+            log.info("phase 1 %s not started", number)
+            return None
+        with order_lock:
+            order["n"] += 1
+            index = order["n"]
+        if control:
+            control.begin(number, index)
         record = verify_certificate(tdr, chain, number)
         store.save_verification(number, record)
         status = record["status"]
-        if status == "MATCH":
-            log.debug("phase 1 %s MATCH flg=%s", number, record.get("flg") or "")
-        else:
-            log.warning("phase 1 %s %s: %s", number, status, record.get("message") or "")
+        message = record.get("message") or ""
+        log.info(
+            "phase 1 %s %s flg=%s action=%s on_chain=%s: %s",
+            number,
+            status,
+            record.get("flg") or "",
+            record.get("chain_action") or "",
+            record.get("on_chain"),
+            message,
+        )
+        if control:
+            control.finish(number, status, message, record.get("chain_action") or "")
         return record
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(one, number) for number in numbers]
         for future in as_completed(futures):
-            results.append(future.result())
+            record = future.result()
+            if record:
+                results.append(record)
 
     summary = {"total": len(results), "MATCH": 0, "MISMATCH": 0, "NOT_FOUND": 0, "API_FAILURE": 0}
     for record in results:
         summary[record["status"]] = summary.get(record["status"], 0) + 1
+    stopped = bool(control and control._stop.is_set())
     log.info(
-        "phase 1 finished total=%s match=%s mismatch=%s not_found=%s api_failure=%s",
+        "phase 1 finished total=%s match=%s mismatch=%s not_found=%s api_failure=%s stopped=%s",
         summary["total"],
         summary["MATCH"],
         summary["MISMATCH"],
         summary["NOT_FOUND"],
         summary["API_FAILURE"],
+        stopped,
     )
-    return {"summary": summary, "results": results}
+    return {"summary": summary, "results": results, "stopped": stopped}
 
 
 def _result(status: str, message: str, **extra) -> dict:

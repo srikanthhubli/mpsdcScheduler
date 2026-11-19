@@ -73,7 +73,7 @@ class RunControl:
             self.state["message"] = message
             self._log(message)
 
-    def extracted(self, application_ids: list[str]) -> None:
+    def extracted(self, application_ids: list[str], noun: str = "application id") -> None:
         with self._lock:
             self.state["extracted"] = list(application_ids)
             self.state["total"] = len(application_ids)
@@ -83,10 +83,10 @@ class RunControl:
             ]
             if application_ids:
                 self.state["status"] = "RUNNING"
-                self.state["message"] = f"Extracted {len(application_ids)} application id(s)"
+                self.state["message"] = f"Extracted {len(application_ids)} {noun}(s)"
             else:
                 self.state["status"] = "COMPLETED"
-                self.state["message"] = "TDR returned no application ids"
+                self.state["message"] = f"TDR returned no {noun}s"
                 self.state["finishedAt"] = utc_now()
             self._log(self.state["message"])
 
@@ -198,7 +198,7 @@ class RunControl:
 class RunBoard:
     def __init__(self):
         self._lock = threading.Lock()
-        self._controls: dict[int, RunControl | None] = {2: None, 3: None}
+        self._controls: dict[int, RunControl | None] = {1: None, 2: None, 3: None}
 
     def attach(self, phase: int) -> RunControl:
         control = RunControl(phase)
@@ -211,7 +211,7 @@ class RunBoard:
             return self._controls.get(phase)
 
     def snapshot(self) -> dict:
-        return {"phase2": self._one(2), "phase3": self._one(3)}
+        return {"phase1": self._one(1), "phase2": self._one(2), "phase3": self._one(3)}
 
     def _one(self, phase: int) -> dict:
         control = self.control(phase)

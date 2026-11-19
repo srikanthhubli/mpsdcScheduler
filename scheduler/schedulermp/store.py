@@ -14,6 +14,8 @@ class StateStore:
     def __init__(self, path: str):
         self.path = path
         self._lock = threading.Lock()
+        self._write_lock = threading.Lock()
+        self._generation = 0
         self.data = self._load()
 
     def _load(self) -> dict:
@@ -27,17 +29,32 @@ class StateStore:
         return loaded
 
     def _save(self) -> None:
-        folder = os.path.dirname(self.path)
-        if folder:
-            os.makedirs(folder, exist_ok=True)
-        temp = self.path + ".tmp"
-        with open(temp, "w", encoding="utf-8") as handle:
-            json.dump(self.data, handle, indent=2, ensure_ascii=False)
-        os.replace(temp, self.path)
+        payload, generation = self._payload()
+        self._write(payload, generation)
+
+    def _payload(self) -> tuple[str, int]:
+        self._generation += 1
+        return json.dumps(self.data, indent=2, ensure_ascii=False), self._generation
+
+    def _write(self, payload: str, generation: int) -> None:
+        with self._write_lock:
+            with self._lock:
+                if generation != self._generation:
+                    return
+            folder = os.path.dirname(self.path)
+            if folder:
+                os.makedirs(folder, exist_ok=True)
+            temp = self.path + ".tmp"
+            with open(temp, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+            os.replace(temp, self.path)
 
     def snapshot(self) -> dict:
         with self._lock:
-            return json.loads(json.dumps(self.data))
+            verifications = {key: dict(row) for key, row in self.data["verifications"].items()}
+            jobs = json.loads(json.dumps(self.data["jobs"]))
+            schedule = json.loads(json.dumps(self.data.get("schedule"))) if self.data.get("schedule") else None
+        return {"verifications": verifications, "jobs": jobs, "schedule": schedule}
 
     def verification(self, certificate_no: str) -> dict | None:
         with self._lock:
@@ -48,8 +65,9 @@ class StateStore:
         record = {**record, "certificate_no": certificate_no, "checked_at": record.get("checked_at") or utc_now()}
         with self._lock:
             self.data["verifications"][certificate_no] = record
-            self._save()
-            return dict(record)
+            payload, generation = self._payload()
+        self._write(payload, generation)
+        return dict(record)
 
     def job(self, key: str) -> dict | None:
         with self._lock:
@@ -59,8 +77,10 @@ class StateStore:
     def save_job(self, key: str, record: dict) -> dict:
         with self._lock:
             self.data["jobs"][key] = record
-            self._save()
-            return json.loads(json.dumps(record))
+            payload, generation = self._payload()
+            saved = json.loads(json.dumps(record))
+        self._write(payload, generation)
+        return saved
 
     def schedule(self) -> dict:
         with self._lock:
@@ -70,8 +90,10 @@ class StateStore:
     def save_schedule(self, schedule: dict) -> dict:
         with self._lock:
             self.data["schedule"] = schedule
-            self._save()
-            return json.loads(json.dumps(schedule))
+            payload, generation = self._payload()
+            saved = json.loads(json.dumps(schedule))
+        self._write(payload, generation)
+        return saved
 
     def claim_field(self, group: str, field: str, value: str) -> bool:
         with self._lock:
@@ -81,8 +103,9 @@ class StateStore:
                 return False
             row[field] = value
             self.data["schedule"] = current
-            self._save()
-            return True
+            payload, generation = self._payload()
+        self._write(payload, generation)
+        return True
 
     def release_field(self, group: str, field: str, value: str) -> None:
         with self._lock:
@@ -92,4 +115,5 @@ class StateStore:
                 return
             row[field] = ""
             self.data["schedule"] = current
-            self._save()
+            payload, generation = self._payload()
+        self._write(payload, generation)

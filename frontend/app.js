@@ -1,5 +1,5 @@
 const screens = ["overview", "verifications", "jobs", "run"];
-const state = { screen: "overview", status: null, verifications: {}, jobs: {}, detail: null, message: "", token: sessionStorage.getItem("tdrToken") || "", runs: { phase2: null, phase3: null }, runTimer: 0 };
+const state = { screen: "overview", status: null, verifications: {}, jobs: {}, detail: null, message: "", token: sessionStorage.getItem("tdrToken") || "", runs: { phase1: null, phase2: null, phase3: null }, runTimer: 0, seenRuns: {}, jobMode: "all" };
 
 const apiBaseInput = document.querySelector("#apiBase");
 const health = document.querySelector("#health");
@@ -61,6 +61,7 @@ function headers() {
 function showApp(signedIn) {
   loginView.hidden = signedIn;
   appView.hidden = !signedIn;
+  if (signedIn) ensureRunTimer();
 }
 
 function baseUrl() {
@@ -114,10 +115,6 @@ function pill(value) {
 }
 
 function render() {
-  if (state.runTimer && state.screen !== "run") {
-    clearInterval(state.runTimer);
-    state.runTimer = 0;
-  }
   if (state.screen === "overview") renderOverview();
   if (state.screen === "verifications") renderVerifications();
   if (state.screen === "jobs") renderJobs();
@@ -194,9 +191,18 @@ function renderVerifications() {
     state.verificationFilter = event.target.value;
     render();
   });
-  document.querySelector("#reload").addEventListener("click", refresh);
-  document.querySelector("#exportAll").addEventListener("click", () => downloadVerifications(false));
-  document.querySelector("#exportChain").addEventListener("click", () => downloadVerifications(true));
+  document.querySelector("#reload").addEventListener("click", (event) => {
+    event.preventDefault();
+    refresh();
+  });
+  document.querySelector("#exportAll").addEventListener("click", (event) => {
+    event.preventDefault();
+    downloadVerifications(false);
+  });
+  document.querySelector("#exportChain").addEventListener("click", (event) => {
+    event.preventDefault();
+    downloadVerifications(true);
+  });
   main.querySelectorAll("[data-cert]").forEach((button) => {
     button.addEventListener("click", () => showVerification(button.dataset.cert));
   });
@@ -239,19 +245,30 @@ function barChart(title, series) {
 }
 
 async function downloadVerifications(onChainOnly) {
-  const response = await fetch(baseUrl() + (onChainOnly ? "/verifications.csv?onChain=1" : "/verifications.csv"), { headers: headers() });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    showNotice(body.message || body.error || "Export failed");
-    return;
+  const button = document.querySelector(onChainOnly ? "#exportChain" : "#exportAll");
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch(baseUrl() + (onChainOnly ? "/verifications.csv?onChain=1" : "/verifications.csv"), { headers: headers(), cache: "no-store" });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      showNotice(body.message || body.error || "Export failed");
+      return;
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = onChainOnly ? "phase1-on-chain.csv" : "phase1-verifications.csv";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showNotice(onChainOnly ? "On-chain export downloaded." : "Verification export downloaded.");
+  } catch (error) {
+    showNotice(explain(error));
+  } finally {
+    if (button) button.disabled = false;
   }
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = onChainOnly ? "phase1-on-chain.csv" : "phase1-verifications.csv";
-  link.click();
-  URL.revokeObjectURL(url);
 }
 
 function showVerification(certificate) {
@@ -263,7 +280,11 @@ function renderJobs() {
   const rows = Object.values(state.jobs);
   main.innerHTML = `
     <div class="row">
-      <label>Mode<select id="mode"><option>all</option><option>legacy</option><option>live</option></select></label>
+      <label>Mode<select id="mode">
+        <option value="all" ${state.jobMode === "all" ? "selected" : ""}>all</option>
+        <option value="legacy" ${state.jobMode === "legacy" ? "selected" : ""}>legacy</option>
+        <option value="live" ${state.jobMode === "live" ? "selected" : ""}>live</option>
+      </select></label>
       <button type="button" id="reload" class="secondary">Reload</button>
     </div>
     <div class="table-wrap"><table>
@@ -273,6 +294,7 @@ function renderJobs() {
     <section class="panel" id="jdetail"></section>`;
   const draw = () => {
     const mode = document.querySelector("#mode").value;
+    state.jobMode = mode;
     const visible = rows.filter((row) => mode === "all" || row.mode === mode);
     document.querySelector("#jobbody").innerHTML = visible.map((row) => `<tr>
       <td>${escapeHtml(row.application_id)}</td>
@@ -290,7 +312,10 @@ function renderJobs() {
     });
   };
   document.querySelector("#mode").addEventListener("change", draw);
-  document.querySelector("#reload").addEventListener("click", refresh);
+  document.querySelector("#reload").addEventListener("click", (event) => {
+    event.preventDefault();
+    refresh();
+  });
   draw();
 }
 
@@ -310,6 +335,7 @@ function renderRun() {
       </form>
       <p id="legacyMsg">${escapeHtml(legacy.message || "")}</p>
     </section>
+    <section class="panel run-live" id="live1"></section>
     <section class="panel run-live" id="live2"></section>
     <section class="panel run-live" id="live3"></section>
     <section class="panel">
@@ -340,7 +366,8 @@ function renderRun() {
         <button type="submit">Run phase 3</button>
       </form>
     </section>
-    <section class="panel"><pre id="runout">Phase 2 and phase 3 keep this screen open and list every application id. Pause and Stop take effect after the current step.</pre></section>`;
+    <section class="panel"><pre id="runout">Each phase lists its records here while it runs. Pause, Resume, and Stop stay available. A phase returns as soon as it has started, and the completion line appears here when it ends.</pre></section>`;
+  paintRun(1, state.runs.phase1);
   paintRun(2, state.runs.phase2);
   paintRun(3, state.runs.phase3);
   if (!main.dataset.runBound) {
@@ -351,10 +378,13 @@ function renderRun() {
   document.querySelector("#p2").addEventListener("submit", (event) => submitRun(event, "/run/phase2"));
   document.querySelector("#p3").addEventListener("submit", (event) => submitRun(event, "/run/phase3", true));
   document.querySelector("#legacySchedule").addEventListener("submit", saveLegacySchedule);
-  if (!state.runTimer) {
-    state.runTimer = setInterval(pollRuns, 1000);
-    pollRuns();
-  }
+  ensureRunTimer();
+  pollRuns();
+}
+
+function ensureRunTimer() {
+  if (state.runTimer) return;
+  state.runTimer = setInterval(pollRuns, 2000);
 }
 
 function onRunAction(event) {
@@ -402,22 +432,53 @@ function paintSchedule() {
 }
 
 async function pollRuns() {
-  if (state.screen !== "run") return;
+  if (!state.token) return;
   try {
     const body = await api("/runs");
-    state.runs = body.runs || state.runs;
-    paintRun(2, state.runs.phase2);
-    paintRun(3, state.runs.phase3);
-    state.schedule = await api("/schedule");
-    paintSchedule();
+    const runs = body.runs || {};
+    noteTransitions(runs);
+    state.runs = runs;
+    if (state.screen === "run") {
+      paintRun(1, runs.phase1);
+      paintRun(2, runs.phase2);
+      paintRun(3, runs.phase3);
+    }
   } catch (error) {
     const message = explain(error);
-    showNotice(message);
     if (/Login required/i.test(message)) {
       state.token = "";
       sessionStorage.removeItem("tdrToken");
       showApp(false);
+      return;
     }
+    if (state.screen === "run") showNotice(message);
+  }
+}
+
+function noteTransitions(runs) {
+  [1, 2, 3].forEach((phase) => {
+    const data = runs[`phase${phase}`] || {};
+    const key = `${data.status}|${data.finishedAt || ""}|${data.message || ""}`;
+    const previous = state.seenRuns[phase];
+    state.seenRuns[phase] = key;
+    if (!previous || previous === key) return;
+    if (!["COMPLETED", "STOPPED", "FAILED"].includes(data.status)) return;
+    const text = data.message || `Phase ${phase} ${data.status}`;
+    showNotice(text);
+    const out = document.querySelector("#runout");
+    if (out) out.textContent = text;
+    refreshData();
+  });
+}
+
+async function refreshData() {
+  try {
+    state.status = await api("/status");
+    state.verifications = (await api("/verifications")).verifications || {};
+    state.jobs = (await api("/jobs")).jobs || {};
+    if (state.screen !== "run") render();
+  } catch (_error) {
+    /* the run notice already explains the outcome */
   }
 }
 
@@ -425,38 +486,51 @@ function paintRun(phase, run) {
   const root = document.querySelector(`#live${phase}`);
   if (!root) return;
   const data = run || { status: "IDLE", message: "No run yet", items: [], log: [], counts: {}, total: 0, index: 0, current: "", stage: "", detail: "" };
-  const scroll = root.querySelector(".run-list")?.scrollTop || 0;
+  if (!root.dataset.ready) {
+    const title = phase === 1 ? "Phase 1 progress" : phase === 2 ? "Phase 2 progress" : "Phase 3 progress";
+    root.innerHTML = `
+      <div class="run-head">
+        <div>
+          <h2>${title}</h2>
+          <p class="run-current"></p>
+          <p class="run-message"></p>
+          <p class="muted run-summary"></p>
+        </div>
+        <div class="run-actions">
+          <button type="button" class="secondary" data-phase="${phase}" data-run="pause">Pause</button>
+          <button type="button" class="secondary" data-phase="${phase}" data-run="resume">Resume</button>
+          <button type="button" class="secondary" data-phase="${phase}" data-run="stop">Stop</button>
+        </div>
+      </div>
+      <ol class="run-list"></ol>
+      <div class="run-log"></div>`;
+    root.dataset.ready = "1";
+  }
   const active = ["EXTRACTING", "RUNNING", "PAUSED", "STOPPING"].includes(data.status);
   const counts = data.counts || {};
-  const title = phase === 2 ? "Phase 2 — legacy migration" : "Phase 3 — live sync";
-  const progress = data.total ? `${data.index || 0} of ${data.total}` : "0 extracted";
+  const noun = phase === 1 ? "certificate" : "application";
+  const progress = data.total ? `${data.index || 0} of ${data.total}` : `0 ${noun}s`;
   const summary = data.total
-    ? `${counts.SUCCESS || 0} succeeded · ${counts.FAILED || 0} failed · ${counts.SKIPPED || 0} skipped · ${counts.STOPPED || 0} stopped · ${counts.PENDING || 0} waiting · ${counts.NOT_STARTED || 0} not started`
-    : "";
-  const items = (data.items || []).map((item) => `<li>
+    ? `${counts.SUCCESS || 0} succeeded · ${counts.MATCH || 0} match · ${counts.MISMATCH || 0} mismatch · ${counts.FAILED || 0} failed · ${counts.API_FAILURE || 0} api failure · ${counts.NOT_FOUND || 0} not found · ${counts.SKIPPED || 0} skipped · ${counts.STOPPED || 0} stopped · ${counts.PENDING || 0} waiting · ${counts.NOT_STARTED || 0} not started`
+    : "Nothing running.";
+  root.querySelector(".run-current").innerHTML = `${pill(data.status)} ${escapeHtml(progress)}${data.current ? ` · ${escapeHtml(data.current)}` : ""}`;
+  root.querySelector(".run-message").textContent = data.message || "";
+  root.querySelector(".run-summary").textContent = summary;
+  root.querySelector('[data-run="pause"]').disabled = !(active && data.status !== "PAUSED" && data.status !== "STOPPING");
+  root.querySelector('[data-run="resume"]').disabled = data.status !== "PAUSED";
+  root.querySelector('[data-run="stop"]').disabled = !active;
+  const form = document.querySelector(`#p${phase}`);
+  const submit = form ? form.querySelector("button[type=submit]") : null;
+  if (submit) submit.disabled = active;
+  const list = root.querySelector(".run-list");
+  const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 8;
+  list.innerHTML = (data.items || []).map((item) => `<li>
       <span>${escapeHtml(item.applicationId)}</span>
       <span>${pill(item.status)}</span>
       <span>${escapeHtml(stageLabel(item.stage))} ${escapeHtml(item.message || "")}</span>
-    </li>`).join("") || `<li><span>No application ids yet.</span></li>`;
-  const log = (data.log || []).slice(-12).map((line) => `<div>${escapeHtml(line)}</div>`).join("");
-  root.innerHTML = `
-    <div class="run-head">
-      <div>
-        <h2>${title}</h2>
-        <p class="run-current">${pill(data.status)} ${escapeHtml(progress)}${data.current ? ` · ${escapeHtml(data.current)}` : ""}</p>
-        <p>${escapeHtml(data.message || "")}</p>
-        <p class="muted">${escapeHtml(summary)}</p>
-      </div>
-      <div class="run-actions">
-        <button type="button" class="secondary" data-phase="${phase}" data-run="pause" ${active && data.status !== "PAUSED" && data.status !== "STOPPING" ? "" : "disabled"}>Pause</button>
-        <button type="button" class="secondary" data-phase="${phase}" data-run="resume" ${data.status === "PAUSED" ? "" : "disabled"}>Resume</button>
-        <button type="button" class="secondary" data-phase="${phase}" data-run="stop" ${active ? "" : "disabled"}>Stop</button>
-      </div>
-    </div>
-    <ol class="run-list">${items}</ol>
-    <div class="run-log">${log}</div>`;
-  const list = root.querySelector(".run-list");
-  if (list) list.scrollTop = scroll;
+    </li>`).join("") || `<li><span>No ${noun}s yet.</span></li>`;
+  if (atBottom) list.scrollTop = list.scrollHeight;
+  root.querySelector(".run-log").textContent = (data.log || []).slice(-40).join("\n");
 }
 
 function stageLabel(stage) {
@@ -476,29 +550,25 @@ async function submitRun(event, path, splitLists) {
   body.limit = Number(body.limit || 0);
   body.force = event.target.force?.checked || false;
   body.oneShot = event.target.oneShot?.checked || false;
+  body.background = true;
   if (splitLists) {
     body.ownerIds = split(body.ownerIds);
     body.certificateNos = split(body.certificateNos);
   }
   const out = document.querySelector("#runout");
-  const phase23 = path.endsWith("phase2") || path.endsWith("phase3");
-  out.textContent = phase23 ? "Started. The list above fills as application ids are extracted." : "Running…";
+  const submit = event.target.querySelector("button[type=submit]");
+  if (submit) submit.disabled = true;
+  out.textContent = "Started. The progress panel above lists each record. Pause, Resume, and Stop stay usable.";
   try {
     const result = await api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (phase23) {
-      out.textContent = result.run?.message || `Finished ${result.count || 0} application(s)`;
-      await pollRuns();
-      return;
-    }
-    out.textContent = JSON.stringify(result.summary || { count: result.count, jobs: (result.jobs || []).map((job) => ({ application_id: job.application_id, status: job.status, last_error: job.last_error })) }, null, 2);
-    await refresh();
-    state.screen = "verifications";
-    document.querySelectorAll("nav button").forEach((item) => item.classList.toggle("active", item.dataset.screen === state.screen));
-    render();
+    out.textContent = result.message || "Started.";
+    showNotice(result.message || "Phase started.");
+    await pollRuns();
   } catch (error) {
     const message = explain(error);
     out.textContent = message;
     showNotice(message);
+    if (submit) submit.disabled = false;
   }
 }
 
