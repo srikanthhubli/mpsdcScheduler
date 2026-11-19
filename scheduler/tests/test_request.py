@@ -1,6 +1,7 @@
 import unittest
 
-from schedulermp.http_client import _ca_candidates, safe_url
+from schedulermp.compare import describe_diffs
+from schedulermp.http_client import _ca_candidates, error_text, safe_url
 from schedulermp.server import _id_list, _limit
 
 
@@ -30,6 +31,17 @@ class RequestShapeTests(unittest.TestCase):
         self.assertEqual(len(found), len(set(found)))
         for path in found:
             self.assertTrue(path.endswith(".crt") or path.endswith(".pem") or "ca-certificates" in path)
+
+    def test_gateway_html_does_not_stay_in_the_error(self):
+        text = error_text("<html><title>403 Forbidden</title><body>Forbidden</body></html>")
+        self.assertNotIn("<html", text.lower())
+        self.assertIn("Forbidden", text)
+
+    def test_mismatch_names_the_field_and_both_values(self):
+        text = describe_diffs([{"field": "samagra", "tdr": "121212121", "blockchain": ""}])
+        self.assertIn("samagra", text)
+        self.assertIn("121212121", text)
+        self.assertIn("blank", text)
 
 
 if __name__ == "__main__":

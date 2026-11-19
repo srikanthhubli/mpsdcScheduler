@@ -66,11 +66,22 @@ def error_text(body: Any) -> str:
         for key in ("error", "message", "error_code"):
             value = body.get(key)
             if isinstance(value, str) and value:
-                return value
-        return json.dumps(body, ensure_ascii=False)[:500]
+                return _plain_error(value)
+        return _plain_error(json.dumps(body, ensure_ascii=False)[:500])
     if body is None:
         return ""
-    return str(body)[:500]
+    return _plain_error(str(body)[:500])
+
+
+def _plain_error(text: str) -> str:
+    lowered = text.lower()
+    if "<html" not in lowered and "<!doctype" not in lowered and "<title>" not in lowered:
+        return text
+    if "forbidden" in lowered or "403" in lowered:
+        return "Forbidden. The gateway blocked this call before the blockchain API handled it."
+    if "unauthorized" in lowered or "401" in lowered:
+        return "Unauthorized"
+    return "The gateway returned an HTML error page instead of JSON."
 
 
 def is_missing(status: int, body: Any) -> bool:

@@ -17,6 +17,7 @@ from schedulermp.chain import tx_id
 from schedulermp.compare import (
     chain_application_canonical,
     chain_owner_canonical,
+    describe_diffs,
     diff_maps,
     drc_canonical,
     generating_canonical,
@@ -328,7 +329,7 @@ class SyncService:
             return _stage("MISMATCH", "generating area missing on blockchain", tx=tx_id(response))
         diffs = diff_maps(generating_canonical(body), chain_application_canonical(readback))
         if diffs:
-            return _stage("MISMATCH", "generating area differs", diffs=diffs, tx=tx_id(response))
+            return _stage("MISMATCH", _mismatch_text("generating area differs", diffs), diffs=diffs, tx=tx_id(response))
         return _stage("MATCH", "generating area verified", tx=tx_id(response))
 
     def _stage_owners(self, bundle: Bundle) -> dict:
@@ -362,7 +363,12 @@ class SyncService:
                 return _stage("MISMATCH", f"owner {body['owner_id']} missing on blockchain", tx=tx_id(response))
             diffs = diff_maps(owner_canonical(body, bundle.application_id), chain_owner_canonical(readback))
             if diffs:
-                return _stage("MISMATCH", f"owner {body['owner_id']} differs", diffs=diffs, tx=tx_id(response))
+                return _stage(
+                    "MISMATCH",
+                    _mismatch_text(f"owner {body['owner_id']} differs", diffs),
+                    diffs=diffs,
+                    tx=tx_id(response),
+                )
             checked.append(str(body["owner_id"]))
         if self.settings.dry_run:
             return _stage("DRY_RUN", "InsertOwnerDetail not sent", owners=checked)
@@ -403,7 +409,12 @@ class SyncService:
                 )
             diffs = diff_maps(drc_canonical(body), drc_canonical(unwrap_chain_drc(readback, body["certificate_no"])))
             if diffs:
-                return _stage("MISMATCH", f"{body['certificate_no']} differs", diffs=diffs, tx=tx_id(response))
+                return _stage(
+                    "MISMATCH",
+                    _mismatch_text(f"{body['certificate_no']} differs", diffs),
+                    diffs=diffs,
+                    tx=tx_id(response),
+                )
             checked.append(body["certificate_no"])
         if self.settings.dry_run:
             return _stage("DRY_RUN", _drc_message("DRCUpload not sent", bundle.drcs), certificates=checked)
@@ -506,6 +517,11 @@ class SyncService:
         except Exception as exc:  # callback must not hide the blockchain result
             log.warning("migration callback failed: %s", exc)
             outcome["callback_error"] = str(exc)
+
+
+def _mismatch_text(message: str, diffs: list) -> str:
+    detail = describe_diffs(diffs)
+    return f"{message}. {detail}" if detail else message
 
 
 def _log_stage(mode: str, application_id: str, stage: str, outcome: dict) -> None:

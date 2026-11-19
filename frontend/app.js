@@ -174,7 +174,7 @@ function renderVerifications() {
     <div class="table-wrap"><table>
       <thead><tr><th>Certificate</th><th>Application</th><th>Flag</th><th>Chain</th><th>Status</th><th>Message</th><th>Checked</th><th></th></tr></thead>
       <tbody>
-        ${visible.map((row) => `<tr>
+        ${visible.map((row) => `<tr class="${problemClass(row.status)}">
           <td>${escapeHtml(row.certificate_no)}</td>
           <td>${escapeHtml(row.application_id || "")}</td>
           <td>${escapeHtml(row.flg || "")}</td>
@@ -206,7 +206,42 @@ function renderVerifications() {
   main.querySelectorAll("[data-cert]").forEach((button) => {
     button.addEventListener("click", () => showVerification(button.dataset.cert));
   });
-  if (state.detail) document.querySelector("#vdetail").innerHTML = `<h2>${escapeHtml(state.detail.certificate_no)}</h2><p>${escapeHtml(state.detail.message || "")}</p><pre>${escapeHtml(JSON.stringify(state.detail.diffs || [], null, 2))}</pre>`;
+  if (state.detail) document.querySelector("#vdetail").innerHTML = `<h2>${escapeHtml(state.detail.certificate_no)} ${pill(state.detail.status)}</h2><p>${escapeHtml(state.detail.message || "")}</p>${diffTable(state.detail.diffs || [])}`;
+}
+
+function failedStage(row) {
+  const stages = row.stages || {};
+  for (const name of ["LOAD", "GENERATING_AREA", "OWNER_DETAIL", "DRC_UPLOAD", "TRANSFER"]) {
+    const stage = stages[name];
+    if (stage && ["MISMATCH", "FAILED", "API_FAILURE"].includes(stage.status)) return name;
+  }
+  return row.current_stage || row.last_successful_stage || "";
+}
+
+function problemClass(status) {
+  return ["MISMATCH", "FAILED", "API_FAILURE"].includes(status) ? "problem" : "";
+}
+
+function diffTable(diffs) {
+  if (!diffs.length) return "";
+  return `<table class="diff-table"><thead><tr><th>Field</th><th>TDR</th><th>Blockchain</th></tr></thead><tbody>${diffs.map((diff) => `<tr class="mismatch">
+      <td>${escapeHtml(diff.field)}</td>
+      <td>${escapeHtml(diff.tdr || "blank")}</td>
+      <td>${escapeHtml(diff.blockchain || "blank")}</td>
+    </tr>`).join("")}</tbody></table>`;
+}
+
+function stageReport(job) {
+  const stages = job.stages || {};
+  const blocks = Object.entries(stages).map(([name, stage]) => {
+    const table = diffTable(Array.isArray(stage.diffs) ? stage.diffs : []);
+    return `<section class="stage-block ${problemClass(stage.status)}">
+      <h3>${escapeHtml(name)} ${pill(stage.status)}</h3>
+      <p>${escapeHtml(stage.message || "")}</p>
+      ${table}
+    </section>`;
+  }).join("");
+  return blocks || "<p>No stage detail stored.</p>";
 }
 
 function chainWord(row) {
@@ -300,14 +335,14 @@ function renderJobs() {
       <td>${escapeHtml(row.application_id)}</td>
       <td>${escapeHtml(row.mode)}</td>
       <td>${pill(row.status)}</td>
-      <td>${escapeHtml(row.last_successful_stage || row.current_stage || "")}</td>
-      <td>${escapeHtml(row.last_error || "")}</td>
+      <td>${escapeHtml(failedStage(row))}</td>
+      <td class="${problemClass(row.status)}">${escapeHtml(row.last_error || "")}</td>
       <td><button type="button" class="secondary" data-job="${escapeAttr(row.mode + ":" + row.application_id)}">Stages</button></td>
     </tr>`).join("") || `<tr><td colspan="6">No jobs yet.</td></tr>`;
     document.querySelectorAll("[data-job]").forEach((button) => {
       button.addEventListener("click", () => {
         const job = state.jobs[button.dataset.job];
-        document.querySelector("#jdetail").innerHTML = `<h2>${escapeHtml(job.application_id)}</h2><pre>${escapeHtml(JSON.stringify(job.stages || {}, null, 2))}</pre>`;
+        document.querySelector("#jdetail").innerHTML = `<h2>${escapeHtml(job.application_id)}</h2>${stageReport(job)}`;
       });
     });
   };
@@ -524,13 +559,21 @@ function paintRun(phase, run) {
   if (submit) submit.disabled = active;
   const list = root.querySelector(".run-list");
   const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 8;
-  list.innerHTML = (data.items || []).map((item) => `<li>
+  list.innerHTML = (data.items || []).map((item) => `<li class="${problemClass(item.status)}">
       <span>${escapeHtml(item.applicationId)}</span>
       <span>${pill(item.status)}</span>
-      <span>${escapeHtml(stageLabel(item.stage))} ${escapeHtml(item.message || "")}</span>
+      <span>${escapeHtml(runLine(item))}</span>
     </li>`).join("") || `<li><span>No ${noun}s yet.</span></li>`;
   if (atBottom) list.scrollTop = list.scrollHeight;
   root.querySelector(".run-log").textContent = (data.log || []).slice(-40).join("\n");
+}
+
+function runLine(item) {
+  const label = stageLabel(item.stage);
+  const message = item.message || "";
+  if (!label) return message;
+  if (message.toLowerCase().startsWith(label.toLowerCase())) return message;
+  return `${label} ${message}`.trim();
 }
 
 function stageLabel(stage) {

@@ -70,6 +70,17 @@ def diff_maps(expected: dict, actual: dict) -> list[dict]:
     return diffs
 
 
+def describe_diffs(diffs: list[dict], limit: int = 6) -> str:
+    parts = []
+    for item in diffs[:limit]:
+        tdr = item.get("tdr") or "blank"
+        chain = item.get("blockchain") or "blank"
+        parts.append(f"{item.get('field')} (TDR: {tdr}, blockchain: {chain})")
+    if len(diffs) > limit:
+        parts.append(f"{len(diffs) - limit} more field(s)")
+    return "; ".join(parts)
+
+
 def generating_canonical(body: dict) -> dict:
     return {
         "application_id": _text(body.get("p_application_id") or body.get("applicationid") or body.get("application_id")),

@@ -188,6 +188,12 @@ form.grid label:has(input[type="checkbox"]) {
 .run-list { list-style: none; margin: 14px 0 0; padding: 0; max-height: 260px; overflow: auto; border-top: 1px solid var(--line); }
 .run-list li { display: grid; grid-template-columns: minmax(180px, 1.3fr) 120px minmax(0, 1.6fr); gap: 8px; align-items: center; padding: 8px 2px; border-bottom: 1px solid var(--line); }
 .run-log { margin-top: 12px; max-height: 240px; overflow: auto; color: #6d655b; font-size: 13px; white-space: pre-wrap; }
+.problem { color: #8d2f23; font-weight: 650; }
+tr.mismatch td { background: #fde8e4; }
+.diff-table { width: 100%; margin-top: 8px; }
+.stage-block { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+.stage-block.problem { border-left: 4px solid #8d2f23; padding-left: 10px; }
+.run-list li.problem { background: #fde8e4; }
 @media (max-width: 800px) {
   .run-head { flex-direction: column; }
   .run-list li { grid-template-columns: 1fr; }
