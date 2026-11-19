@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import ssl
 import time
 import uuid
@@ -14,8 +15,35 @@ log = logging.getLogger("schedulermp.http")
 
 _SECRET_QUERY = ("key", "token", "password", "secret")
 
+def _ca_candidates() -> list[str]:
+    configured = os.environ.get("SSL_CA_FILE", "")
+    names = [configured] if configured else []
+    names.extend(
+        [
+            "/etc/pki/tls/certs/ca-bundle.crt",
+            "/etc/pki/tls/cert.pem",
+            "/etc/ssl/certs/ca-certificates.crt",
+            "/etc/ssl/cert.pem",
+        ]
+    )
+    found = []
+    for path in names:
+        if path and path not in found and os.path.isfile(path):
+            found.append(path)
+    return found
+
+
 def _ssl_context() -> ssl.SSLContext:
     context = ssl.create_default_context()
+    # Curl on the SDC host trusts the system bundle. Python's default store on
+    # that host does not include the same issuer, which fails as CERTIFICATE_VERIFY_FAILED.
+    for path in _ca_candidates():
+        try:
+            context.load_verify_locations(cafile=path)
+            log.info("using CA bundle %s", path)
+            break
+        except ssl.SSLError:
+            log.warning("could not load CA bundle %s", path)
     # mpbsp-uat.mp.gov.in negotiates legacy TLS renegotiation. OpenSSL 3 rejects it
     # unless this option is set, which surfaces as a browser "Failed to fetch".
     legacy = getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0)

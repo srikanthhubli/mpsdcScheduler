@@ -1,6 +1,6 @@
 import unittest
 
-from schedulermp.http_client import safe_url
+from schedulermp.http_client import _ca_candidates, safe_url
 from schedulermp.server import _id_list, _limit
 
 
@@ -24,6 +24,12 @@ class RequestShapeTests(unittest.TestCase):
         self.assertIn("certificateNumber=DRC%2F1", url)
         self.assertIn("api_key=%2A%2A%2A", url)
         self.assertNotIn("secret", url)
+
+    def test_ca_candidates_keep_existing_files_once(self):
+        found = _ca_candidates()
+        self.assertEqual(len(found), len(set(found)))
+        for path in found:
+            self.assertTrue(path.endswith(".crt") or path.endswith(".pem") or "ca-certificates" in path)
 
 
 if __name__ == "__main__":
