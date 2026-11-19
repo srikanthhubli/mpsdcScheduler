@@ -27,24 +27,34 @@ class ChainClient:
             "peer": self.settings.peer,
         }
 
-    def get_drc(self, certificate_no: str) -> tuple[int, dict]:
+    def get_drc(self, certificate_no: str) -> tuple[int, dict, str]:
         """Legacy GetDRCDetails keeps owner_from and owner_to. The v1.4 read omits them."""
+        legacy = "GET /Agency/GetDRCDetails"
         status, body = self.get("/Agency/GetDRCDetails", {"certificateNumber": certificate_no})
         if status < 400 and not is_missing(status, body):
-            return status, body
+            return status, body, legacy
         encoded = urllib.parse.quote(certificate_no, safe="/")
-        return self.get(f"/api/tdr/drcs/{encoded}", {})
+        current = "GET /api/tdr/drcs/{certificateNo}"
+        status, body = self.get(f"/api/tdr/drcs/{encoded}", {})
+        if is_missing(status, body):
+            return status, body, f"{legacy}, {current}"
+        return status, body, current
 
-    def get_owner(self, owner_id: str, application_id: str) -> tuple[int, dict]:
+    def get_owner(self, owner_id: str, application_id: str) -> tuple[int, dict, str]:
         """GET /api/tdr/owners/{ownerId}, then legacy GetOwnerDetails."""
         encoded = urllib.parse.quote(str(owner_id), safe="")
+        current = "GET /api/tdr/owners/{ownerId}"
         status, body = self.get(f"/api/tdr/owners/{encoded}", {})
         if status < 400 and not is_missing(status, body):
-            return status, body
-        return self.get(
+            return status, body, current
+        legacy = "GET /Agency/GetOwnerDetails"
+        status, body = self.get(
             "/Agency/GetOwnerDetails",
             {"owner_id": owner_id, "applicationid": application_id},
         )
+        if is_missing(status, body):
+            return status, body, f"{current}, {legacy}"
+        return status, body, legacy
 
     def get(self, path: str, params: dict | None = None) -> tuple[int, dict]:
         query = {**(params or {}), **self._target()}

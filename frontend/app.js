@@ -172,7 +172,7 @@ function renderVerifications() {
       ["API failure", visible.filter((row) => row.status === "API_FAILURE").length, "warn"]
     ])}</section>
     <div class="table-wrap"><table>
-      <thead><tr><th>Certificate</th><th>Application</th><th>Flag</th><th>Chain</th><th>Status</th><th>Message</th><th>Checked</th><th></th></tr></thead>
+      <thead><tr><th>Certificate</th><th>Application</th><th>Flag</th><th>Chain</th><th>Status</th><th>Mismatch</th><th>Checked</th><th></th></tr></thead>
       <tbody>
         ${visible.map((row) => `<tr class="${problemClass(row.status)}">
           <td>${escapeHtml(row.certificate_no)}</td>
@@ -180,7 +180,7 @@ function renderVerifications() {
           <td>${escapeHtml(row.flg || "")}</td>
           <td>${escapeHtml(chainWord(row))}</td>
           <td>${pill(row.status)}</td>
-          <td>${escapeHtml(row.message || "")}</td>
+          <td class="${problemClass(row.status)}">${escapeHtml(row.message || "")}${diffTable(row.diffs || [])}</td>
           <td>${escapeHtml(row.checked_at || "")}</td>
           <td><button type="button" class="secondary" data-cert="${escapeAttr(row.certificate_no)}">Diff</button></td>
         </tr>`).join("") || `<tr><td colspan="8">No verifications yet.</td></tr>`}
@@ -222,12 +222,32 @@ function problemClass(status) {
   return ["MISMATCH", "FAILED", "API_FAILURE"].includes(status) ? "problem" : "";
 }
 
+function mismatchDiffs(row) {
+  const found = [];
+  Object.values(row.stages || {}).forEach((stage) => {
+    if (stage && stage.status === "MISMATCH" && Array.isArray(stage.diffs)) found.push(...stage.diffs);
+  });
+  return found;
+}
+
+function receivedCell(diff, side) {
+  const receivedKey = side === "tdr" ? "tdr_received" : "blockchain_received";
+  const fallbackKey = side === "tdr" ? "tdr" : "blockchain";
+  const fieldKey = side === "tdr" ? "tdr_field" : "blockchain_field";
+  const raw = Object.prototype.hasOwnProperty.call(diff, receivedKey) ? diff[receivedKey] : diff[fallbackKey];
+  const shown = raw === undefined || raw === null || raw === "" ? "blank" : String(raw);
+  const field = diff[fieldKey] ? `<div class="diff-key">${escapeHtml(diff[fieldKey])}</div>` : "";
+  return `<td>${field}${escapeHtml(shown)}</td>`;
+}
+
 function diffTable(diffs) {
-  if (!diffs.length) return "";
-  return `<table class="diff-table"><thead><tr><th>Field</th><th>TDR</th><th>Blockchain</th></tr></thead><tbody>${diffs.map((diff) => `<tr class="mismatch">
+  if (!diffs || !diffs.length) return "";
+  return `<table class="diff-table"><thead><tr><th>Field</th><th>Received from TDR</th><th>TDR API</th><th>Received from blockchain</th><th>Blockchain API</th></tr></thead><tbody>${diffs.map((diff) => `<tr class="mismatch">
       <td>${escapeHtml(diff.field)}</td>
-      <td>${escapeHtml(diff.tdr || "blank")}</td>
-      <td>${escapeHtml(diff.blockchain || "blank")}</td>
+      ${receivedCell(diff, "tdr")}
+      <td>${escapeHtml(diff.tdr_api || "")}</td>
+      ${receivedCell(diff, "blockchain")}
+      <td>${escapeHtml(diff.blockchain_api || "")}</td>
     </tr>`).join("")}</tbody></table>`;
 }
 
@@ -323,7 +343,7 @@ function renderJobs() {
       <button type="button" id="reload" class="secondary">Reload</button>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Application</th><th>Mode</th><th>Status</th><th>Stage</th><th>Error</th><th></th></tr></thead>
+      <thead><tr><th>Application</th><th>Mode</th><th>Status</th><th>Stage</th><th>Mismatch</th><th></th></tr></thead>
       <tbody id="jobbody"></tbody>
     </table></div>
     <section class="panel" id="jdetail"></section>`;
@@ -336,7 +356,7 @@ function renderJobs() {
       <td>${escapeHtml(row.mode)}</td>
       <td>${pill(row.status)}</td>
       <td>${escapeHtml(failedStage(row))}</td>
-      <td class="${problemClass(row.status)}">${escapeHtml(row.last_error || "")}</td>
+      <td class="${problemClass(row.status)}">${escapeHtml(row.last_error || "")}${diffTable(mismatchDiffs(row))}</td>
       <td><button type="button" class="secondary" data-job="${escapeAttr(row.mode + ":" + row.application_id)}">Stages</button></td>
     </tr>`).join("") || `<tr><td colspan="6">No jobs yet.</td></tr>`;
     document.querySelectorAll("[data-job]").forEach((button) => {

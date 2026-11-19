@@ -190,7 +190,10 @@ form.grid label:has(input[type="checkbox"]) {
 .run-log { margin-top: 12px; max-height: 240px; overflow: auto; color: #6d655b; font-size: 13px; white-space: pre-wrap; }
 .problem { color: #8d2f23; font-weight: 650; }
 tr.mismatch td { background: #fde8e4; }
-.diff-table { width: 100%; margin-top: 8px; }
+.diff-table { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: 13px; font-weight: 450; }
+.diff-table th, .diff-table td { text-align: left; vertical-align: top; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.diff-table th { color: #6d655b; font-size: 12px; font-weight: 650; }
+.diff-key { color: #6d655b; font-size: 12px; font-weight: 650; }
 .stage-block { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line); }
 .stage-block.problem { border-left: 4px solid #8d2f23; padding-left: 10px; }
 .run-list li.problem { background: #fde8e4; }

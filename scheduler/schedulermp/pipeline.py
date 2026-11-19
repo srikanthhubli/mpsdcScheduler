@@ -15,13 +15,13 @@ from contextvars import ContextVar
 from schedulermp.bundle import Bundle
 from schedulermp.chain import tx_id
 from schedulermp.compare import (
-    chain_application_canonical,
-    chain_owner_canonical,
+    chain_application_parts,
+    chain_owner_parts,
     describe_diffs,
     diff_maps,
-    drc_canonical,
-    generating_canonical,
-    owner_canonical,
+    drc_parts,
+    generating_parts,
+    owner_parts,
     unwrap_chain_drc,
 )
 from schedulermp.http_client import ApiError, is_missing
@@ -321,15 +321,17 @@ class SyncService:
             response = self.chain.post("/Agency/InsertGeneratingArea", body)
         except ApiError as exc:
             return _stage("API_FAILURE", exc.message, retryable=exc.retryable)
+        api = "GET /Agency/GetApplicationDetails"
+        tdr_api = "GET /GetGeneratingApplicationByApplicationID"
         status, readback = self.chain.get(
             "/Agency/GetApplicationDetails",
             {"applicationid": body["p_application_id"]},
         )
         if is_missing(status, readback):
-            return _stage("MISMATCH", "generating area missing on blockchain", tx=tx_id(response))
-        diffs = diff_maps(generating_canonical(body), chain_application_canonical(readback))
+            return _stage("MISMATCH", "generating area missing on blockchain", blockchain_api=api, tdr_api=tdr_api, tx=tx_id(response))
+        diffs = _compared(generating_parts(body), chain_application_parts(readback), api, tdr_api)
         if diffs:
-            return _stage("MISMATCH", _mismatch_text("generating area differs", diffs), diffs=diffs, tx=tx_id(response))
+            return _stage("MISMATCH", _mismatch_text("generating area differs", diffs), diffs=diffs, blockchain_api=api, tx=tx_id(response))
         return _stage("MATCH", "generating area verified", tx=tx_id(response))
 
     def _stage_owners(self, bundle: Bundle) -> dict:
@@ -352,21 +354,29 @@ class SyncService:
                 response = self.chain.post("/Agency/InsertOwnerDetail", body)
             except ApiError as exc:
                 return _stage("API_FAILURE", f"owner {body['owner_id']}: {exc.message}", retryable=exc.retryable)
-            if hasattr(self.chain, "get_owner"):
-                status, readback = self.chain.get_owner(str(body["owner_id"]), body["applicationid"])
-            else:
-                status, readback = self.chain.get(
-                    "/Agency/GetOwnerDetails",
-                    {"owner_id": body["owner_id"], "applicationid": body["applicationid"]},
-                )
+            status, readback, api = _chain_read(
+                self.chain,
+                "get_owner",
+                (str(body["owner_id"]), body["applicationid"]),
+                "/Agency/GetOwnerDetails",
+                {"owner_id": body["owner_id"], "applicationid": body["applicationid"]},
+                "GET /Agency/GetOwnerDetails",
+            )
             if is_missing(status, readback):
-                return _stage("MISMATCH", f"owner {body['owner_id']} missing on blockchain", tx=tx_id(response))
-            diffs = diff_maps(owner_canonical(body, bundle.application_id), chain_owner_canonical(readback))
+                return _stage(
+                    "MISMATCH",
+                    f"owner {body['owner_id']} missing on blockchain",
+                    blockchain_api=api,
+                    tx=tx_id(response),
+                )
+            tdr_api = "GET /GetApplicationDetailByApplicationID"
+            diffs = _compared(owner_parts(body, bundle.application_id), chain_owner_parts(readback), api, tdr_api)
             if diffs:
                 return _stage(
                     "MISMATCH",
                     _mismatch_text(f"owner {body['owner_id']} differs", diffs),
                     diffs=diffs,
+                    blockchain_api=api,
                     tx=tx_id(response),
                 )
             checked.append(str(body["owner_id"]))
@@ -394,25 +404,29 @@ class SyncService:
                 response = self.chain.post("/Department/DRCUpload", body)
             except ApiError as exc:
                 return _stage("API_FAILURE", f"{body['certificate_no']}: {exc.message}", retryable=exc.retryable)
-            if hasattr(self.chain, "get_drc"):
-                status, readback = self.chain.get_drc(body["certificate_no"])
-            else:
-                status, readback = self.chain.get(
-                    "/Agency/GetDRCDetails",
-                    {"certificateNumber": body["certificate_no"]},
-                )
+            status, readback, api = _chain_read(
+                self.chain,
+                "get_drc",
+                (body["certificate_no"],),
+                "/Agency/GetDRCDetails",
+                {"certificateNumber": body["certificate_no"]},
+                "GET /Agency/GetDRCDetails",
+            )
             if is_missing(status, readback):
                 return _stage(
                     "MISMATCH",
                     f"{body['certificate_no']} missing on blockchain",
+                    blockchain_api=api,
                     tx=tx_id(response),
                 )
-            diffs = diff_maps(drc_canonical(body), drc_canonical(unwrap_chain_drc(readback, body["certificate_no"])))
+            tdr_api = "GET /GetDetailByCertificateNo"
+            diffs = _compared(drc_parts(body), drc_parts(unwrap_chain_drc(readback, body["certificate_no"])), api, tdr_api)
             if diffs:
                 return _stage(
                     "MISMATCH",
                     _mismatch_text(f"{body['certificate_no']} differs", diffs),
                     diffs=diffs,
+                    blockchain_api=api,
                     tx=tx_id(response),
                 )
             checked.append(body["certificate_no"])
@@ -517,6 +531,23 @@ class SyncService:
         except Exception as exc:  # callback must not hide the blockchain result
             log.warning("migration callback failed: %s", exc)
             outcome["callback_error"] = str(exc)
+
+
+def _chain_read(chain, method: str, args: tuple, path: str, params: dict, default_api: str) -> tuple[int, dict, str]:
+    if hasattr(chain, method):
+        result = getattr(chain, method)(*args)
+        if isinstance(result, tuple) and len(result) >= 3:
+            return result[0], result[1], result[2] or default_api
+        status, body = result
+        return status, body, default_api
+    status, body = chain.get(path, params)
+    return status, body, default_api
+
+
+def _compared(tdr_part: tuple, chain_part: tuple, blockchain_api: str, tdr_api: str) -> list:
+    tdr_values, tdr_sources = tdr_part
+    chain_values, chain_sources = chain_part
+    return diff_maps(tdr_values, chain_values, blockchain_api, tdr_api, tdr_sources, chain_sources)
 
 
 def _mismatch_text(message: str, diffs: list) -> str:

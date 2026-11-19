@@ -43,6 +43,24 @@ class RequestShapeTests(unittest.TestCase):
         self.assertIn("121212121", text)
         self.assertIn("blank", text)
 
+    def test_mismatch_names_the_blockchain_api(self):
+        text = describe_diffs([
+            {"field": "samagra", "tdr": "121212121", "blockchain": "", "blockchain_api": "GET /api/tdr/owners/{ownerId}"},
+        ])
+        self.assertIn("GET /api/tdr/owners/{ownerId}", text)
+
+    def test_mismatch_keeps_the_values_each_api_returned(self):
+        from schedulermp.compare import chain_owner_parts, diff_maps, owner_parts
+
+        tdr = owner_parts({"owner_id": 376, "ownernm": "Dhaniya Bai", "owner_samagra": "121212121", "owner_mob": "9"})
+        chain = chain_owner_parts({"data": {"owner": {"ownerID": 376, "name": "Dhaniya Bai", "samagraID": None, "mobile": "9"}}})
+        diffs = diff_maps(tdr[0], chain[0], "GET /api/tdr/owners/{ownerId}", "GET /GetApplicationDetailByApplicationID", tdr[1], chain[1])
+        samagra = next(item for item in diffs if item["field"] == "samagra")
+        self.assertEqual(samagra["tdr_field"], "owner_samagra")
+        self.assertEqual(samagra["tdr_received"], "121212121")
+        self.assertEqual(samagra["blockchain_field"], "samagraID")
+        self.assertEqual(samagra["blockchain_received"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

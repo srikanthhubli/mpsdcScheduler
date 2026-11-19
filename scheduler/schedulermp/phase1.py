@@ -6,7 +6,7 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from schedulermp.compare import diff_maps, drc_canonical, unwrap_chain_drc
+from schedulermp.compare import describe_diffs, diff_maps, drc_parts, unwrap_chain_drc
 from schedulermp.http_client import ApiError, is_missing
 from schedulermp.mapping import _text, chain_action, drc_body, lists_from_payload
 from schedulermp.store import utc_now
@@ -37,14 +37,12 @@ def verify_certificate(tdr, chain, certificate_no: str) -> dict:
             return _result("NOT_FOUND", tdr_body.get("message") or "certificate not found in TDR")
         return _result("API_FAILURE", tdr_body.get("message") or "TDR DRC read failed", retryable=True)
 
-    expected = drc_canonical(drc_body(matched[0]))
+    tdr_api = "GET /GetDetailByCertificateNo"
+    expected, tdr_sources = drc_parts(drc_body(matched[0]))
     flg = expected.get("flg") or ""
     action = chain_action(flg)
     try:
-        if hasattr(chain, "get_drc"):
-            status, chain_body = chain.get_drc(certificate_no)
-        else:
-            status, chain_body = chain.get("/Agency/GetDRCDetails", {"certificateNumber": certificate_no})
+        status, chain_body, api = _chain_drc(chain, certificate_no)
     except ApiError as exc:
         return _result("API_FAILURE", exc.message, retryable=exc.retryable, application_id=expected["application_id"], flg=flg, chain_action=action, on_chain=False)
 
@@ -56,13 +54,37 @@ def verify_certificate(tdr, chain, certificate_no: str) -> dict:
             flg=flg,
             chain_action=action,
             on_chain=False,
-            diffs=[{"field": "certificate_no", "tdr": certificate_no, "blockchain": ""}],
+            blockchain_api=api,
+            tdr_api=tdr_api,
+            diffs=[{
+                "field": "certificate_no",
+                "tdr": certificate_no,
+                "blockchain": "",
+                "tdr_field": "certificate_no",
+                "tdr_received": certificate_no,
+                "tdr_api": tdr_api,
+                "blockchain_field": "certificateNumber",
+                "blockchain_received": "",
+                "blockchain_api": api,
+            }],
         )
 
-    actual = drc_canonical(unwrap_chain_drc(chain_body, certificate_no))
-    diffs = diff_maps(expected, actual)
+    actual, chain_sources = drc_parts(unwrap_chain_drc(chain_body, certificate_no))
+    diffs = diff_maps(expected, actual, api, tdr_api, tdr_sources, chain_sources)
     if diffs:
-        return _result("MISMATCH", "DRC fields differ", application_id=expected["application_id"], flg=flg, chain_action=action, on_chain=True, diffs=diffs)
+        detail = describe_diffs(diffs)
+        message = f"DRC fields differ. {detail}" if detail else "DRC fields differ"
+        return _result(
+            "MISMATCH",
+            message,
+            application_id=expected["application_id"],
+            flg=flg,
+            chain_action=action,
+            on_chain=True,
+            blockchain_api=api,
+            tdr_api=tdr_api,
+            diffs=diffs,
+        )
     return _result("MATCH", "DRC fields match", application_id=expected["application_id"], flg=flg, chain_action=action, on_chain=True)
 
 
@@ -133,6 +155,18 @@ def run_phase1(tdr, chain, store, certificate_no: str = "", limit: int = 0, conc
     return {"summary": summary, "results": results, "stopped": stopped}
 
 
+def _chain_drc(chain, certificate_no: str) -> tuple[int, dict, str]:
+    default = "GET /Agency/GetDRCDetails"
+    if hasattr(chain, "get_drc"):
+        result = chain.get_drc(certificate_no)
+        if isinstance(result, tuple) and len(result) >= 3:
+            return result[0], result[1], result[2] or default
+        status, body = result
+        return status, body, default
+    status, body = chain.get("/Agency/GetDRCDetails", {"certificateNumber": certificate_no})
+    return status, body, default
+
+
 def _result(status: str, message: str, **extra) -> dict:
     record = {
         "status": status,
@@ -171,7 +205,7 @@ def verifications_csv(rows: dict) -> str:
         item["on_chain"] = "yes" if item.get("on_chain") or item.get("status") == "MATCH" else "no"
         diffs = item.get("diffs") or []
         item["diffs"] = "; ".join(
-            f"{diff.get('field')}: tdr={diff.get('tdr')} chain={diff.get('blockchain')}"
+            f"{diff.get('field')}: tdr {diff.get('tdr_field') or diff.get('field')}={diff.get('tdr_received', diff.get('tdr'))} via {diff.get('tdr_api') or ''}; blockchain {diff.get('blockchain_field') or diff.get('field')}={diff.get('blockchain_received', diff.get('blockchain'))} via {diff.get('blockchain_api') or ''}"
             for diff in diffs
             if isinstance(diff, dict)
         )

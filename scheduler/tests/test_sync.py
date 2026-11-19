@@ -320,6 +320,7 @@ class PhaseTests(unittest.TestCase):
         record = verify_certificate(FakeTdr(), FakeChain(), "DRC/2024/00002/Indore")
         self.assertEqual(record["status"], "MISMATCH")
         self.assertEqual(record["message"], "MISSING_ON_BLOCKCHAIN")
+        self.assertEqual(record["diffs"][0]["blockchain_api"], "GET /Agency/GetDRCDetails")
 
     def test_phase1_match(self):
         expected = drc_body(TDR_DRC["data"][0]["certificate_details"][0])
@@ -356,6 +357,13 @@ class PhaseTests(unittest.TestCase):
         self.assertEqual(job["stages"]["GENERATING_AREA"]["status"], "MATCH")
         self.assertEqual(job["stages"]["OWNER_DETAIL"]["status"], "MATCH")
         self.assertEqual(job["stages"]["DRC_UPLOAD"]["status"], "MISMATCH")
+        diffs = job["stages"]["DRC_UPLOAD"]["diffs"]
+        self.assertTrue(diffs)
+        self.assertEqual(diffs[0]["field"], "remaining_value_tdr")
+        self.assertEqual(diffs[0]["tdr_received"], "75.92")
+        self.assertEqual(diffs[0]["blockchain_received"], "1")
+        self.assertEqual(diffs[0]["tdr_api"], "GET /GetDetailByCertificateNo")
+        self.assertEqual(diffs[0]["blockchain_api"], "GET /Agency/GetDRCDetails")
         self.assertNotIn("TRANSFER", job["stages"])
         paths = [path for path, _body in service.chain.writes]
         self.assertEqual(
