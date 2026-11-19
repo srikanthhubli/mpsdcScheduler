@@ -492,6 +492,7 @@ class SyncService:
                 status or job.get("status") or "",
                 message or _job_message(job),
                 job.get("current_stage") or job.get("last_successful_stage") or "",
+                _run_records(job),
             )
         return job
 
@@ -590,6 +591,23 @@ def _detail(stage: str, message: str, log: bool = False) -> None:
     if control is None:
         return
     control.detail(control.state.get("current") or "", stage, message, log=log)
+
+
+def _run_records(job: dict) -> list:
+    records = []
+    for name, stage in (job.get("stages") or {}).items():
+        if not isinstance(stage, dict):
+            continue
+        records.append(
+            {
+                "kind": name,
+                "label": name,
+                "status": stage.get("status") or "",
+                "message": stage.get("message") or "",
+                "diffs": stage.get("diffs") or [],
+            }
+        )
+    return records
 
 
 def _job_message(job: dict) -> str:

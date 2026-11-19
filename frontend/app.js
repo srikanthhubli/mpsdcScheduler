@@ -595,9 +595,12 @@ function paintRun(phase, run) {
   const list = root.querySelector(".run-list");
   const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 8;
   list.innerHTML = (data.items || []).map((item) => `<li class="${problemClass(item.status)}">
-      <span>${escapeHtml(item.applicationId)}</span>
-      <span>${pill(item.status)}</span>
-      <span>${escapeHtml(runLine(item))}</span>
+      <div class="run-row">
+        <span>${escapeHtml(item.applicationId)}</span>
+        <span>${pill(item.status)}</span>
+        <span>${escapeHtml(runLine(item))}</span>
+      </div>
+      ${item.records && item.records.length ? phase1Table(item) : ""}
     </li>`).join("") || `<li><span>No ${noun}s yet.</span></li>`;
   if (atBottom) list.scrollTop = list.scrollHeight;
   root.querySelector(".run-log").textContent = (data.log || []).slice(-40).join("\n");

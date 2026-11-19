@@ -114,9 +114,9 @@ class RunControl:
             if log:
                 self._log(f"{application_id} · {label}: {message}")
 
-    def finish(self, application_id: str, status: str, message: str, stage: str = "") -> None:
+    def finish(self, application_id: str, status: str, message: str, stage: str = "", records: list | None = None) -> None:
         with self._lock:
-            self._touch(application_id, status, stage, message)
+            self._touch(application_id, status, stage, message, records)
             label = STAGE_LABELS.get(stage, stage)
             suffix = f" · {label}" if label else ""
             self._log(f"{application_id} {status}{suffix}: {message}")
@@ -179,16 +179,19 @@ class RunControl:
                 return False
         return not self._stop.is_set()
 
-    def _touch(self, application_id: str, status: str, stage: str, message: str) -> None:
+    def _touch(self, application_id: str, status: str, stage: str, message: str, records: list | None = None) -> None:
         for item in self.state["items"]:
             if item["applicationId"] == application_id:
                 item["status"] = status
                 item["stage"] = stage
                 item["message"] = message
+                if records is not None:
+                    item["records"] = records
                 return
-        self.state["items"].append(
-            {"applicationId": application_id, "status": status, "stage": stage, "message": message}
-        )
+        item = {"applicationId": application_id, "status": status, "stage": stage, "message": message}
+        if records is not None:
+            item["records"] = records
+        self.state["items"].append(item)
 
     def _log(self, message: str) -> None:
         self.state["log"].append(f"{utc_now()}  {message}")

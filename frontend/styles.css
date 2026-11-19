@@ -177,7 +177,7 @@ form.grid label:has(input[type="checkbox"]) {
   nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   nav button { font-size: 12px; padding: 0 2px; }
   .connect button, #health { flex: 0 0 auto; }
-  .run-list li { grid-template-columns: 1fr; }
+  .run-row { grid-template-columns: 1fr; }
 }
 
 .run-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
@@ -185,8 +185,9 @@ form.grid label:has(input[type="checkbox"]) {
 .run-head p { margin: 4px 0 0; }
 .run-current { font-weight: 650; }
 .run-actions { display: flex; gap: 8px; flex: 0 0 auto; flex-wrap: wrap; }
-.run-list { list-style: none; margin: 14px 0 0; padding: 0; max-height: 260px; overflow: auto; border-top: 1px solid var(--line); }
-.run-list li { display: grid; grid-template-columns: minmax(180px, 1.3fr) 120px minmax(0, 1.6fr); gap: 8px; align-items: center; padding: 8px 2px; border-bottom: 1px solid var(--line); }
+.run-list { list-style: none; margin: 14px 0 0; padding: 0; max-height: 480px; overflow: auto; border-top: 1px solid var(--line); }
+.run-list li { display: block; padding: 8px 2px; border-bottom: 1px solid var(--line); }
+.run-row { display: grid; grid-template-columns: minmax(180px, 1.3fr) 120px minmax(0, 1.6fr); gap: 8px; align-items: center; }
 .run-log { margin-top: 12px; max-height: 240px; overflow: auto; color: #6d655b; font-size: 13px; white-space: pre-wrap; }
 .problem { color: #8d2f23; font-weight: 650; }
 tr.mismatch td { background: #fde8e4; }
@@ -199,5 +200,5 @@ tr.mismatch td { background: #fde8e4; }
 .run-list li.problem { background: #fde8e4; }
 @media (max-width: 800px) {
   .run-head { flex-direction: column; }
-  .run-list li { grid-template-columns: 1fr; }
+  .run-row { grid-template-columns: 1fr; }
 }
